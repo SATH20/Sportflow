@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SportFlow — Playo-Style UI Preview</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --white: #FFFFFF;
+            --off-white: #F8FAFC;
+            --screen-bg: #F1F5F9;
+            --card-border: #E2E8F0;
+            --playo-green: #22C55E;
+            --playo-green-light: #DCFCE7;
+            --playo-green-dark: #16A34A;
+            --info-blue: #635BFF;
+            --info-blue-light: #EEF2FF;
+            --text-primary: #0F172A;
+            --text-secondary: #64748B;
+            --text-tertiary: #94A3B8;
+            --live-red: #EF4444;
+            --live-red-bg: #FEF2F2;
+            --warning-amber: #F59E0B;
+            --warning-amber-bg: #FFFBEB;
+            --bracket-line: #CBD5E1;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--screen-bg);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .phone-container {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            padding: 40px 20px;
+            flex-wrap: wrap;
+        }
+
+        .phone-frame {
+            width: 390px;
+            min-height: 844px;
+            background: var(--screen-bg);
+            border-radius: 40px;
+            overflow: hidden;
+            position: relative;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.12), 0 0 0 1px var(--card-border);
+        }
+
+        .phone-screen {
+            width: 100%;
+            height: 100%;
+            overflow-y: auto;
+            position: relative;
+            padding: 0 0 72px;
+        }
+        .phone-screen::-webkit-scrollbar { display: none; }
+
+        .phone-label {
+            text-align: center;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 14px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        /* ── Cards ───────────────────────────────────────── */
+        .sport-card {
+            background: var(--off-white);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .sport-card:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+        }
+
+        /* ── Bottom Nav ──────────────────────────────────── */
+        .bottom-nav {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: var(--white);
+            border-top: 1px solid var(--card-border);
+            display: flex;
+            justify-content: space-around;
+            padding: 8px 0 20px;
+        }
+        .nav-item {
+            display: flex; flex-direction: column; align-items: center; gap: 2px;
+            font-size: 10px; font-weight: 600;
+            color: var(--text-tertiary);
+            cursor: pointer;
+        }
+        .nav-item.active { color: var(--playo-green); }
+        .nav-item .nav-icon { font-size: 22px; }
+
+        /* ── Helpers ─────────────────────────────────────── */
+        .section-hdr {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 20px 8px;
+        }
+        .section-hdr h2 { font-size: 18px; font-weight: 700; color: var(--text-primary); }
+        .section-hdr a { color: var(--info-blue); text-decoration: none; font-size: 13px; font-weight: 600; }
+
+        .chip {
+            display: inline-flex; align-items: center;
+            padding: 4px 10px; border-radius: 12px;
+            font-size: 10px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+        }
+        .chip.green { background: var(--playo-green-light); color: var(--playo-green-dark); }
+        .chip.blue { background: var(--info-blue-light); color: var(--info-blue); }
+        .chip.red { background: var(--live-red-bg); color: var(--live-red); }
+        .chip.amber { background: var(--warning-amber-bg); color: var(--warning-amber); }
+
+        .pill-btn {
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            background: var(--playo-green); color: white;
+            border: none; border-radius: 24px;
+            padding: 14px 24px; font-weight: 700; font-size: 14px;
+            cursor: pointer; width: 100%; font-family: inherit;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .pill-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(34,197,94,0.3); }
+        .pill-btn.outline-red {
+            background: transparent; border: 1px solid rgba(239,68,68,0.5); color: var(--live-red);
+        }
+
+        .live-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: var(--live-red-bg); border-radius: 12px;
+            padding: 4px 10px; font-size: 10px; font-weight: 700; color: var(--live-red);
+        }
+        .live-dot {
+            width: 8px; height: 8px; background: var(--live-red); border-radius: 50%;
+            animation: pulse 0.8s ease-in-out infinite alternate;
+        }
+        @keyframes pulse {
+            from { opacity: 1; transform: scale(1); }
+            to { opacity: 0.3; transform: scale(1.3); }
+        }
+
+        .team-avatar {
+            width: 44px; height: 44px; border-radius: 50%;
+            background: linear-gradient(135deg, var(--playo-green), var(--playo-green-dark));
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 800; font-size: 14px; color: white;
+        }
+
+        .sport-chip {
+            display: inline-flex; align-items: center; gap: 4px;
+            background: var(--off-white); border: 1px solid var(--card-border); border-radius: 12px;
+            padding: 5px 10px; font-size: 11px; font-weight: 500; color: var(--text-secondary);
+        }
+
+        .progress-bar {
+            height: 6px; border-radius: 3px; background: var(--card-border); overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; border-radius: 3px; background: var(--playo-green);
+            transition: width 0.5s;
+        }
+
+        .text-xs { font-size: 10px; } .text-sm { font-size: 12px; } .text-base { font-size: 14px; }
+        .text-lg { font-size: 16px; } .text-xl { font-size: 18px; } .text-2xl { font-size: 20px; }
+        .text-3xl { font-size: 24px; } .text-5xl { font-size: 48px; }
+        .text-primary { color: var(--text-primary); } .text-secondary { color: var(--text-secondary); }
+        .text-tertiary { color: var(--text-tertiary); } .text-green { color: var(--playo-green-dark); }
+        .font-bold { font-weight: 700; } .font-extra { font-weight: 800; } .font-semi { font-weight: 600; }
+
+        .white-section { background: var(--white); }
+
+        @media (max-width: 900px) { .phone-container { flex-direction: column; align-items: center; } }
+
+        .top-title {
+            text-align: center; padding: 40px 20px 20px;
+        }
+        .top-title h1 {
+            font-size: 36px; font-weight: 900; color: var(--text-primary);
+        }
+        .top-title span { color: var(--playo-green); }
+        .top-title p { color: var(--text-secondary); font-size: 16px; margin-top: 6px; }
+
+        /* Bracket specific */
+        .bracket-node {
+            width: 170px; border-radius: 24px; padding: 10px 14px;
+        }
+        .bracket-node.final { border: 1.5px solid var(--playo-green); }
+        .bracket-team-row {
+            display: flex; justify-content: space-between; align-items: center; padding: 4px 0;
+        }
+        .winner-dot { width: 6px; height: 6px; background: var(--playo-green); border-radius: 50%; margin-right: 6px; }
+        .bracket-divider { height: 1px; background: var(--card-border); margin: 4px 0; }
+    </style>
+</head>
+<body>
+
+<div class="top-title">
+    <h1>⚡ <span>SportFlow</span> UI Preview</h1>
+    <p>Playo-Style "Ice & Action" Design System</p>
+</div>
+
+<div class="phone-container">
+
+<!-- ═══ SCREEN 1: HOME FEED ═══════════════════════════════════════════════ -->
+<div>
+<div class="phone-frame">
+<div class="phone-screen">
+
+    <!-- Header -->
+    <div class="white-section" style="padding:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <p class="text-sm text-secondary">Good evening! 👋</p>
+                <h1 style="font-size:32px;font-weight:900;color:var(--text-primary);letter-spacing:-0.5px">SportFlow</h1>
+            </div>
+            <div style="width:44px;height:44px;border-radius:50%;background:var(--off-white);display:flex;align-items:center;justify-content:center;font-size:18px">🔔</div>
+        </div>
+        <div style="margin-top:16px;background:var(--off-white);border:1px solid var(--card-border);border-radius:16px;padding:14px 16px;display:flex;align-items:center;gap:12px">
+            <span class="text-tertiary">🔍</span>
+            <span class="text-base text-tertiary">Search tournaments, events...</span>
+        </div>
+    </div>
+
+    <!-- Live Now -->
+    <div class="section-hdr"><h2>Live Now</h2><a href="#">View All</a></div>
+
+    <div style="padding:0 20px">
+        <div class="sport-card" style="padding:20px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <span class="sport-chip">⚽ Football</span>
+                <span class="live-badge"><span class="live-dot"></span> LIVE</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <div style="text-align:center;flex:1">
+                    <div class="team-avatar" style="margin:0 auto">TF</div>
+                    <div class="text-sm font-semi" style="margin-top:6px">Thunder FC</div>
+                </div>
+                <div style="text-align:center;flex:1">
+                    <div style="font-size:28px;font-weight:900;color:var(--text-primary)">2 - 1</div>
+                    <div class="text-xs text-tertiary" style="margin-top:2px">2nd Half · 72'</div>
+                </div>
+                <div style="text-align:center;flex:1">
+                    <div class="team-avatar" style="margin:0 auto">SU</div>
+                    <div class="text-sm font-semi" style="margin-top:6px">Storm United</div>
+                </div>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px">
+                <span class="text-xs text-tertiary">📍 National Stadium</span>
+                <span class="text-sm font-semi" style="color:var(--info-blue)">Premier League</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Featured Tournament Hero -->
+    <div class="section-hdr"><h2>Featured Tournament</h2></div>
+    <div style="padding:0 20px">
+        <div style="border-radius:24px;overflow:hidden;height:180px;background:linear-gradient(135deg,#22C55E,#16A34A,#064E3B);position:relative">
+            <div style="position:absolute;width:200px;height:200px;border-radius:50%;background:rgba(255,255,255,0.06);top:-40px;right:-30px"></div>
+            <div style="position:absolute;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,0.04);bottom:-20px;right:40px"></div>
+            <div style="padding:24px;display:flex;flex-direction:column;justify-content:space-between;height:100%">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="background:rgba(255,255,255,0.2);border-radius:12px;padding:6px 12px;font-size:10px;font-weight:700;color:white;letter-spacing:0.5px">🏆 FEATURED</span>
+                    <span style="font-size:28px;opacity:0.5">🏆</span>
+                </div>
+                <div>
+                    <div style="font-size:24px;font-weight:900;color:white">Premier League 2026</div>
+                    <div style="margin-top:4px;color:rgba(255,255,255,0.8);font-size:14px">Football • ₹5,00,000 • 16 teams</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Suggested For You -->
+    <div class="section-hdr"><h2>Suggested For You</h2><a href="#">See All</a></div>
+
+    <div style="padding:0 20px 6px">
+        <div class="sport-card" style="padding:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="sport-chip">🏏 Cricket</span>
+                <span class="chip green">BEGINNER</span>
+            </div>
+            <div style="margin-top:14px;font-size:20px;font-weight:700;color:var(--text-primary)">Royal Kings vs Super Giants</div>
+            <div style="margin-top:8px;font-size:12px;color:var(--text-tertiary)">📍 Eden Gardens • <span style="color:var(--info-blue);font-weight:600">Champions Trophy</span></div>
+            <div style="margin-top:14px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span class="text-sm text-secondary">4 spots left</span>
+                    <span class="text-sm font-semi text-primary">12/16</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:75%"></div></div>
+            </div>
+            <button class="pill-btn" style="margin-top:14px">Join Now →</button>
+        </div>
+    </div>
+
+    <div style="padding:0 20px 6px">
+        <div class="sport-card" style="padding:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+                <span class="sport-chip">⚽ Football</span>
+                <span class="chip amber">INTERMEDIATE</span>
+            </div>
+            <div style="margin-top:14px;font-size:20px;font-weight:700;color:var(--text-primary)">Phoenix Rising vs Arctic Wolves</div>
+            <div style="margin-top:8px;font-size:12px;color:var(--text-tertiary)">📍 Olympic Park • <span style="color:var(--info-blue);font-weight:600">Premier League</span></div>
+            <div style="margin-top:14px">
+                <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                    <span class="text-sm" style="color:var(--live-red)">2 spots left</span>
+                    <span class="text-sm font-semi text-primary">14/16</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" style="width:87.5%;background:var(--live-red)"></div></div>
+            </div>
+            <button class="pill-btn" style="margin-top:14px">Join Now →</button>
+        </div>
+    </div>
+
+    <div class="bottom-nav">
+        <div class="nav-item active"><div class="nav-icon">🏠</div><span>Home</span></div>
+        <div class="nav-item"><div class="nav-icon">📅</div><span>Events</span></div>
+        <div class="nav-item"><div class="nav-icon">⚽</div><span>My Matches</span></div>
+        <div class="nav-item"><div class="nav-icon">👤</div><span>Profile</span></div>
+    </div>
+</div>
+</div>
+<div class="phone-label">HOME FEED</div>
+</div>
+
+<!-- ═══ SCREEN 2: EVENTS ═══════════════════════════════════════════════════ -->
+<div>
+<div class="phone-frame">
+<div class="phone-screen">
+
+    <div class="white-section" style="padding:20px">
+        <h1 style="font-size:32px;font-weight:900;letter-spacing:-0.5px">Events & Tournaments</h1>
+        <p class="text-base text-secondary" style="margin-top:4px">Find your next game</p>
+    </div>
+
+    <!-- Filters -->
+    <div class="white-section" style="padding:8px 20px 16px;display:flex;gap:8px;overflow-x:auto">
+        <span style="padding:8px 16px;border-radius:20px;background:var(--playo-green-light);border:1.5px solid var(--playo-green);font-size:13px;font-weight:700;color:var(--playo-green-dark)">All</span>
+        <span style="padding:8px 16px;border-radius:20px;background:var(--off-white);border:1px solid var(--card-border);font-size:13px;font-weight:500;color:var(--text-secondary)">Football</span>
+        <span style="padding:8px 16px;border-radius:20px;background:var(--off-white);border:1px solid var(--card-border);font-size:13px;font-weight:500;color:var(--text-secondary)">Cricket</span>
+        <span style="padding:8px 16px;border-radius:20px;background:var(--off-white);border:1px solid var(--card-border);font-size:13px;font-weight:500;color:var(--text-secondary)">Basketball</span>
+    </div>
+
+    <!-- Tournament Hero Cards -->
+    <div class="section-hdr"><h2>Active Tournaments</h2></div>
+
+    <div style="padding:0 20px 8px">
+        <div style="border-radius:24px;overflow:hidden;height:170px;background:linear-gradient(135deg,#1E3A5F,#0F172A);position:relative">
+            <div style="position:absolute;width:150px;height:150px;border-radius:50%;background:rgba(255,255,255,0.05);top:-30px;right:-20px"></div>
+            <div style="padding:20px;display:flex;flex-direction:column;justify-content:space-between;height:100%">
+                <div style="display:flex;justify-content:space-between">
+                    <span style="background:rgba(255,255,255,0.15);border-radius:12px;padding:4px 10px;font-size:10px;font-weight:700;color:white">FOOTBALL</span>
+                    <span style="background:var(--playo-green);border-radius:12px;padding:4px 10px;font-size:10px;font-weight:700;color:white">IN PROGRESS</span>
+                </div>
+                <div>
+                    <div style="font-size:24px;font-weight:900;color:white">Premier League 2026</div>
+                    <div style="margin-top:6px;display:flex;gap:16px;font-size:12px;color:rgba(255,255,255,0.8)">
+                        <span>🏆 ₹5,00,000</span><span>👥 0/16 teams</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div style="padding:0 20px 8px">
+        <div style="border-radius:24px;overflow:hidden;height:170px;background:linear-gradient(135deg,#7C3AED,#4C1D95);position:relative">
+            <div style="position:absolute;width:150px;height:150px;border-radius:50%;background:rgba(255,255,255,0.05);top:-30px;right:-20px"></div>
+            <div style="padding:20px;display:flex;flex-direction:column;justify-content:space-between;height:100%">
+                <div style="display:flex;justify-content:space-between">
+                    <span style="background:rgba(255,255,255,0.15);border-radius:12px;padding:4px 10px;font-size:10px;font-weight:700;color:white">CRICKET</span>
+                    <span style="background:var(--warning-amber);border-radius:12px;padding:4px 10px;font-size:10px;font-weight:700;color:white">REGISTRATION</span>
+                </div>
+                <div>
+                    <div style="font-size:24px;font-weight:900;color:white">Champions Trophy</div>
+                    <div style="margin-top:6px;display:flex;gap:16px;font-size:12px;color:rgba(255,255,255,0.8)">
+                        <span>🏆 ₹2,50,000</span><span>👥 0/8 teams</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upcoming Events -->
+    <div class="section-hdr"><h2>Upcoming Events</h2></div>
+
+    <div style="padding:0 20px 6px">
+        <div class="sport-card" style="padding:14px;display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:16px;background:var(--playo-green-light);display:flex;align-items:center;justify-content:center;font-size:22px">🏏</div>
+            <div style="flex:1">
+                <div class="text-lg font-semi">Royal Kings vs Super Giants</div>
+                <div class="text-xs text-tertiary" style="margin-top:2px">📍 Eden Gardens</div>
+            </div>
+            <div style="text-align:right">
+                <span class="chip green">BEGINNER</span>
+                <div class="text-xs" style="color:var(--info-blue);font-weight:600;margin-top:4px">Champions Trophy</div>
+            </div>
+        </div>
+    </div>
+
+    <div style="padding:0 20px 6px">
+        <div class="sport-card" style="padding:14px;display:flex;align-items:center;gap:14px">
+            <div style="width:52px;height:52px;border-radius:16px;background:var(--playo-green-light);display:flex;align-items:center;justify-content:center;font-size:22px">⚽</div>
+            <div style="flex:1">
+                <div class="text-lg font-semi">Phoenix Rising vs Arctic Wolves</div>
+                <div class="text-xs text-tertiary" style="margin-top:2px">📍 Olympic Park</div>
+            </div>
+            <div style="text-align:right">
+                <span class="chip amber">INTERMEDIATE</span>
+                <div class="text-xs" style="color:var(--info-blue);font-weight:600;margin-top:4px">Premier League</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bottom-nav">
+        <div class="nav-item"><div class="nav-icon">🏠</div><span>Home</span></div>
+        <div class="nav-item active"><div class="nav-icon">📅</div><span>Events</span></div>
+        <div class="nav-item"><div class="nav-icon">⚽</div><span>My Matches</span></div>
+        <div class="nav-item"><div class="nav-icon">👤</div><span>Profile</span></div>
+    </div>
+</div>
+</div>
+<div class="phone-label">EVENTS</div>
+</div>
+
+<!-- ═══ SCREEN 3: BRACKET ═════════════════════════════════════════════════ -->
+<div>
+<div class="phone-frame">
+<div class="phone-screen">
+
+    <div class="white-section" style="padding:20px">
+        <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:40px;height:40px;border-radius:50%;background:var(--off-white);display:flex;align-items:center;justify-content:center">←</div>
+            <div>
+                <h1 style="font-size:24px;font-weight:900">Tournament Bracket</h1>
+                <p class="text-sm text-secondary">Premier League 2026 · Football</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter chips -->
+    <div class="white-section" style="padding:8px 20px 12px;display:flex;gap:8px">
+        <span style="padding:6px 14px;border-radius:20px;background:var(--playo-green-light);border:1.5px solid var(--playo-green);font-size:12px;font-weight:700;color:var(--playo-green-dark)">Premier League 2026</span>
+        <span style="padding:6px 14px;border-radius:20px;background:var(--off-white);border:1px solid var(--card-border);font-size:12px;font-weight:500;color:var(--text-secondary)">Champions Trophy</span>
+    </div>
+
+    <!-- Bracket -->
+    <div style="display:flex;gap:20px;padding:16px 20px;overflow-x:auto">
+        <!-- QF -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:12px;min-width:170px">
+            <span style="background:var(--off-white);border:1px solid var(--card-border);border-radius:12px;padding:6px 14px;font-size:11px;font-weight:700;color:var(--text-secondary)">Quarter Finals</span>
+
+            <div class="sport-card bracket-node" style="border:1.5px solid rgba(34,197,94,0.4)">
+                <div class="bracket-team-row">
+                    <div style="display:flex;align-items:center"><div class="winner-dot"></div><span class="text-sm font-bold text-green">Thunder FC</span></div>
+                    <span class="font-bold text-green">3</span>
+                </div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row">
+                    <span class="text-sm text-tertiary">Phoenix Rising</span>
+                    <span class="text-tertiary font-bold">1</span>
+                </div>
+            </div>
+
+            <div class="sport-card bracket-node">
+                <div class="bracket-team-row"><span class="text-sm">Storm United</span><span class="font-bold text-tertiary">2</span></div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row"><span class="text-sm">Arctic Wolves</span><span class="font-bold text-tertiary">2</span></div>
+            </div>
+
+            <div class="sport-card bracket-node" style="border:1.5px solid rgba(34,197,94,0.4)">
+                <div class="bracket-team-row">
+                    <div style="display:flex;align-items:center"><div class="winner-dot"></div><span class="text-sm font-bold text-green">Night Hawks</span></div>
+                    <span class="font-bold text-green">4</span>
+                </div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row"><span class="text-sm text-tertiary">Solar Bears</span><span class="text-tertiary font-bold">2</span></div>
+            </div>
+
+            <div class="sport-card bracket-node" style="border:1.5px solid rgba(34,197,94,0.4)">
+                <div class="bracket-team-row"><span class="text-sm text-tertiary">Royal Kings</span><span class="text-tertiary font-bold">1</span></div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row">
+                    <div style="display:flex;align-items:center"><div class="winner-dot"></div><span class="text-sm font-bold text-green">Super Giants</span></div>
+                    <span class="font-bold text-green">3</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- SF -->
+        <div style="display:flex;flex-direction:column;align-items:center;gap:64px;padding-top:48px;min-width:170px">
+            <span style="background:var(--off-white);border:1px solid var(--card-border);border-radius:12px;padding:6px 14px;font-size:11px;font-weight:700;color:var(--text-secondary)">Semi Finals</span>
+            <div class="sport-card bracket-node">
+                <div class="bracket-team-row"><span class="text-sm font-semi">Thunder FC</span><span class="text-tertiary">-</span></div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row"><span class="text-sm text-tertiary">TBD</span><span class="text-tertiary">-</span></div>
+            </div>
+            <div class="sport-card bracket-node">
+                <div class="bracket-team-row"><span class="text-sm font-semi">Night Hawks</span><span class="text-tertiary">-</span></div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row"><span class="text-sm font-semi">Super Giants</span><span class="text-tertiary">-</span></div>
+            </div>
+        </div>
+
+        <!-- Final -->
+        <div style="display:flex;flex-direction:column;align-items:center;padding-top:120px;min-width:170px">
+            <span style="background:var(--playo-green-light);border:1px solid rgba(34,197,94,0.5);border-radius:12px;padding:6px 14px;font-size:11px;font-weight:700;color:var(--playo-green-dark)">Final 🏆</span>
+            <div class="sport-card bracket-node final" style="margin-top:16px">
+                <div style="text-align:center;font-size:10px;font-weight:700;color:var(--playo-green);margin-bottom:8px">🏆 FINAL</div>
+                <div class="bracket-team-row"><span class="text-sm text-tertiary">TBD</span><span class="text-tertiary">-</span></div>
+                <div class="bracket-divider"></div>
+                <div class="bracket-team-row"><span class="text-sm text-tertiary">TBD</span><span class="text-tertiary">-</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bottom-nav">
+        <div class="nav-item"><div class="nav-icon">🏠</div><span>Home</span></div>
+        <div class="nav-item"><div class="nav-icon">📅</div><span>Events</span></div>
+        <div class="nav-item active"><div class="nav-icon">⚽</div><span>My Matches</span></div>
+        <div class="nav-item"><div class="nav-icon">👤</div><span>Profile</span></div>
+    </div>
+</div>
+</div>
+<div class="phone-label">BRACKET VIEW</div>
+</div>
+
+<!-- ═══ SCREEN 4: ADMIN ═══════════════════════════════════════════════════ -->
+<div>
+<div class="phone-frame">
+<div class="phone-screen">
+
+    <div class="white-section" style="padding:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+                <h1 style="font-size:32px;font-weight:900">Admin Portal</h1>
+                <p class="text-base text-secondary" style="margin-top:2px">Manage events & operations</p>
+            </div>
+            <div style="width:44px;height:44px;border-radius:50%;background:var(--off-white);display:flex;align-items:center;justify-content:center;font-size:18px">✕</div>
+        </div>
+    </div>
+
+    <!-- Stats -->
+    <div style="display:flex;gap:8px;padding:8px 16px">
+        <div class="sport-card" style="flex:1;padding:16px;text-align:center">
+            <div style="width:40px;height:40px;border-radius:12px;background:var(--warning-amber-bg);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;font-size:18px">💳</div>
+            <div style="font-size:22px;font-weight:800">3</div>
+            <div class="text-xs text-tertiary">Pending</div>
+        </div>
+        <div class="sport-card" style="flex:1;padding:16px;text-align:center">
+            <div style="width:40px;height:40px;border-radius:12px;background:var(--playo-green-light);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;font-size:18px">🏆</div>
+            <div style="font-size:22px;font-weight:800">2</div>
+            <div class="text-xs text-tertiary">Active</div>
+        </div>
+        <div class="sport-card" style="flex:1;padding:16px;text-align:center">
+            <div style="width:40px;height:40px;border-radius:12px;background:var(--info-blue-light);display:flex;align-items:center;justify-content:center;margin:0 auto 8px;font-size:18px">⚽</div>
+            <div style="font-size:22px;font-weight:800">2</div>
+            <div class="text-xs text-tertiary">Matches</div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div style="display:flex;border-bottom:1px solid var(--card-border);background:white">
+        <div style="flex:1;text-align:center;padding:12px;font-size:14px;font-weight:700;color:var(--playo-green);border-bottom:3px solid var(--playo-green)">Payments</div>
+        <div style="flex:1;text-align:center;padding:12px;font-size:14px;font-weight:500;color:var(--text-tertiary)">Tournaments</div>
+        <div style="flex:1;text-align:center;padding:12px;font-size:14px;font-weight:500;color:var(--text-tertiary)">Matches</div>
+    </div>
+
+    <div class="section-hdr"><h2>Pending Verifications</h2></div>
+
+    <!-- Payment Cards -->
+    <div style="padding:0 20px 8px">
+        <div class="sport-card" style="padding:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div style="width:44px;height:44px;border-radius:14px;background:var(--warning-amber-bg);display:flex;align-items:center;justify-content:center;font-size:18px">💳</div>
+                    <div>
+                        <div class="text-lg font-semi">Thunder FC</div>
+                        <div class="text-xs text-tertiary">TXN: TXN001234</div>
+                    </div>
+                </div>
+                <div style="font-size:22px;font-weight:800;color:var(--playo-green)">₹5,000</div>
+            </div>
+            <div style="display:flex;gap:10px">
+                <button class="pill-btn" style="flex:1">✓ Verify</button>
+                <button class="pill-btn outline-red" style="flex:1">✕ Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <div style="padding:0 20px 8px">
+        <div class="sport-card" style="padding:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div style="width:44px;height:44px;border-radius:14px;background:var(--warning-amber-bg);display:flex;align-items:center;justify-content:center;font-size:18px">💳</div>
+                    <div>
+                        <div class="text-lg font-semi">Storm United</div>
+                        <div class="text-xs text-tertiary">TXN: TXN001235</div>
+                    </div>
+                </div>
+                <div style="font-size:22px;font-weight:800;color:var(--playo-green)">₹5,000</div>
+            </div>
+            <div style="display:flex;gap:10px">
+                <button class="pill-btn" style="flex:1">✓ Verify</button>
+                <button class="pill-btn outline-red" style="flex:1">✕ Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <div style="padding:0 20px 8px">
+        <div class="sport-card" style="padding:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div style="width:44px;height:44px;border-radius:14px;background:var(--warning-amber-bg);display:flex;align-items:center;justify-content:center;font-size:18px">💳</div>
+                    <div>
+                        <div class="text-lg font-semi">Night Hawks</div>
+                        <div class="text-xs text-tertiary">TXN: TXN001236</div>
+                    </div>
+                </div>
+                <div style="font-size:22px;font-weight:800;color:var(--playo-green)">₹5,000</div>
+            </div>
+            <div style="display:flex;gap:10px">
+                <button class="pill-btn" style="flex:1">✓ Verify</button>
+                <button class="pill-btn outline-red" style="flex:1">✕ Reject</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="bottom-nav">
+        <div class="nav-item"><div class="nav-icon">🏠</div><span>Home</span></div>
+        <div class="nav-item"><div class="nav-icon">📅</div><span>Events</span></div>
+        <div class="nav-item"><div class="nav-icon">⚽</div><span>My Matches</span></div>
+        <div class="nav-item active"><div class="nav-icon">👤</div><span>Profile</span></div>
+    </div>
+</div>
+</div>
+<div class="phone-label">ADMIN PORTAL</div>
+</div>
+
+</div>
+
+<div style="text-align:center;padding:20px 20px 60px;color:var(--text-tertiary);font-size:12px">
+    SportFlow v1.0.0 · Ice & Action Design System · Playo-Inspired
+</div>
+
+</body>
+</html>
