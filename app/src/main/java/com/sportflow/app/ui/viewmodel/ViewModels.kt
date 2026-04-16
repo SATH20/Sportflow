@@ -391,7 +391,7 @@ class AdminViewModel @Inject constructor(
         }
     }
 
-    // ── Live Scoring Engine ─────────────────────────────────────────────────
+    // ── Sport-Specific Live Scoring ─────────────────────────────────────────
 
     fun selectMatchForScoring(match: Match) {
         _uiState.update { it.copy(selectedMatch = match) }
@@ -401,45 +401,75 @@ class AdminViewModel @Inject constructor(
         _uiState.update { it.copy(selectedMatch = null) }
     }
 
-    /** Atomic score increment — instantly reflected on all player devices */
-    fun incrementScoreA() {
+    /** Universal dispatcher for any sport scoring action */
+    fun applyScoringAction(action: com.sportflow.app.data.model.ScoringAction) {
         val matchId = _uiState.value.selectedMatch?.id ?: return
         viewModelScope.launch {
             try {
-                repository.incrementScore(matchId, "A")
+                repository.applyScoringAction(matchId, action)
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message) }
             }
         }
     }
 
-    fun incrementScoreB() {
+    /** Set-based sports (Badminton/Volleyball/TT): wrap up current set */
+    fun completeSet(winnerTeam: String) {
         val matchId = _uiState.value.selectedMatch?.id ?: return
         viewModelScope.launch {
             try {
-                repository.incrementScore(matchId, "B")
+                repository.completeSet(matchId, winnerTeam)
+                _uiState.update { it.copy(successMessage = "Set completed! Starting next set.") }
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message) }
             }
         }
     }
 
-    fun decrementScoreA() {
-        val matchId = _uiState.value.selectedMatch?.id ?: return
+    /** Cricket: advance the over counter by one ball */
+    fun advanceOver() {
+        val match = _uiState.value.selectedMatch ?: return
         viewModelScope.launch {
             try {
-                repository.decrementScore(matchId, "A")
+                repository.advanceOver(match.id, match.currentInning)
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message) }
             }
         }
     }
 
-    fun decrementScoreB() {
+    /** Cricket: switch from 1st to 2nd innings */
+    fun startSecondInning() {
         val matchId = _uiState.value.selectedMatch?.id ?: return
         viewModelScope.launch {
             try {
-                repository.decrementScore(matchId, "B")
+                repository.startSecondInning(matchId)
+                _uiState.update { it.copy(successMessage = "2nd Innings started!") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /** Basketball: advance to next quarter */
+    fun nextQuarter() {
+        val matchId = _uiState.value.selectedMatch?.id ?: return
+        viewModelScope.launch {
+            try {
+                repository.nextQuarter(matchId)
+                _uiState.update { it.copy(successMessage = "Next quarter started!") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /** Undo: decrement score by 1 */
+    fun undoScore(team: String) {
+        val matchId = _uiState.value.selectedMatch?.id ?: return
+        viewModelScope.launch {
+            try {
+                repository.decrementScore(matchId, team)
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message) }
             }
@@ -458,6 +488,7 @@ class AdminViewModel @Inject constructor(
             }
         }
     }
+
 
     // ── Match Lifecycle ─────────────────────────────────────────────────────
 

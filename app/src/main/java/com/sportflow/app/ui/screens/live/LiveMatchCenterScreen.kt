@@ -144,6 +144,8 @@ fun LiveMatchCenterScreen(
 
         // Selected Match Score
         uiState.selectedMatch?.let { match ->
+            val sportScore = SportScoreEngine.formatScore(match)
+
             item {
                 Spacer(modifier = Modifier.height(12.dp))
                 SportCard(
@@ -155,7 +157,7 @@ fun LiveMatchCenterScreen(
                         modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        // Tournament info
+                        // Tournament / Sport info
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -166,25 +168,124 @@ fun LiveMatchCenterScreen(
                                 color = InfoBlue
                             )
                             StatusChip(
-                                text = match.round.ifEmpty { match.currentPeriod },
+                                text = match.sportType.ifEmpty { match.round },
                                 color = GnitsOrange
                             )
                         }
 
                         Spacer(modifier = Modifier.height(24.dp))
 
-                        // Score Display
-                        ScoreDisplay(
-                            teamAName = match.teamA,
-                            teamBName = match.teamB,
-                            scoreA = match.scoreA,
-                            scoreB = match.scoreB,
-                            isLive = true
-                        )
+                        // Sport-specific score header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // Team A
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    match.teamA,
+                                    style = SportFlowTheme.typography.labelLarge,
+                                    color = TextSecondary,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    sportScore.displayA,
+                                    style = SportFlowTheme.typography.displayLarge,
+                                    color = GnitsOrangeDark,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                if (match.teamADepartment.isNotBlank()) {
+                                    StatusChip(text = match.teamADepartment, color = GnitsOrange)
+                                }
+                            }
+
+                            // Center period badge
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(horizontal = 8.dp)
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (match.status == MatchStatus.LIVE) LiveRedBg else OffWhite
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        if (match.status == MatchStatus.LIVE) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Box(modifier = Modifier.size(6.dp).background(LiveRed, CircleShape))
+                                                Text("LIVE", style = SportFlowTheme.typography.labelSmall, color = LiveRed, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                        if (sportScore.centerText.isNotBlank()) {
+                                            Text(
+                                                sportScore.centerText,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                                style = SportFlowTheme.typography.labelSmall,
+                                                color = TextSecondary,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Team B
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(
+                                    match.teamB,
+                                    style = SportFlowTheme.typography.labelLarge,
+                                    color = TextSecondary,
+                                    maxLines = 1
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    sportScore.displayB,
+                                    style = SportFlowTheme.typography.displayLarge,
+                                    color = InfoBlue,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                if (match.teamBDepartment.isNotBlank()) {
+                                    StatusChip(text = match.teamBDepartment, color = InfoBlue)
+                                }
+                            }
+                        }
+
+                        // Sport-specific subtext (quarter breakdown, chase target, set scores)
+                        if (sportScore.subText.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = OffWhite,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    sportScore.subText,
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    style = SportFlowTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                        if (sportScore.extras.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(sportScore.extras, style = SportFlowTheme.typography.bodySmall, color = TextTertiary)
+                        }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Timer
+                        // Timer / period
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = GnitsOrangeLight,
@@ -211,6 +312,8 @@ fun LiveMatchCenterScreen(
                     }
                 }
             }
+
+
 
             // Venue info
             item {

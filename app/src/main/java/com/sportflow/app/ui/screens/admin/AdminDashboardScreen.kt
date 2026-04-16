@@ -459,40 +459,51 @@ private fun CreateMatchFormCard(
     }
 }
 
-// ── LIVE SCORING PANEL ───────────────────────────────────────────────────────
+// ── SPORT-SPECIFIC LIVE SCORING PANEL ───────────────────────────────────────
 
 @Composable
 private fun LiveScoringPanel(
     match: Match,
     viewModel: AdminViewModel
 ) {
+    val score = SportScoreEngine.formatScore(match)
     var highlightText by remember { mutableStateOf("") }
+    val sportType = SportType.fromString(match.sportType)
 
     SportCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 6.dp)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp)
     ) {
         Column(
             modifier = Modifier.padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Match info header
+            // ── Header row ────────────────────────────────────────────────
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                StatusChip(
-                    text = match.status.name,
-                    color = when (match.status) {
-                        MatchStatus.LIVE -> LiveRed
-                        MatchStatus.SCHEDULED -> InfoBlue
-                        MatchStatus.HALFTIME -> WarningAmber
-                        MatchStatus.COMPLETED -> SuccessGreen
-                        MatchStatus.CANCELLED -> ErrorRed
+                Column {
+                    StatusChip(
+                        text = match.status.name,
+                        color = when (match.status) {
+                            MatchStatus.LIVE -> LiveRed
+                            MatchStatus.SCHEDULED -> InfoBlue
+                            MatchStatus.HALFTIME -> WarningAmber
+                            MatchStatus.COMPLETED -> SuccessGreen
+                            MatchStatus.CANCELLED -> ErrorRed
+                        }
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(match.sportType, style = SportFlowTheme.typography.labelMedium, color = GnitsOrange)
+                        Text("·", color = TextTertiary)
+                        Text(match.venue, style = SportFlowTheme.typography.labelMedium, color = TextTertiary)
                     }
-                )
+                }
                 TextButton(onClick = { viewModel.deselectMatch() }) {
                     Text("Deselect", color = TextTertiary)
                 }
@@ -500,100 +511,39 @@ private fun LiveScoringPanel(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Score Display
-            ScoreDisplay(
-                teamAName = match.teamA,
-                teamBName = match.teamB,
-                scoreA = match.scoreA,
-                scoreB = match.scoreB,
-                isLive = match.status == MatchStatus.LIVE
-            )
+            // ── Sport-specific score header ────────────────────────────────
+            SportSpecificScoreHeader(match = match, score = score, sportType = sportType)
 
             Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider(color = CardBorder)
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Score Controls — +/- buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                // Team A controls
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = match.teamA,
-                        style = SportFlowTheme.typography.labelLarge,
-                        color = TextPrimary,
-                        maxLines = 1
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledIconButton(
-                            onClick = { viewModel.decrementScoreA() },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = LiveRedBg,
-                                contentColor = LiveRed
-                            ),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Filled.Remove, contentDescription = "Decrement A")
-                        }
-                        FilledIconButton(
-                            onClick = { viewModel.incrementScoreA() },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = GnitsOrangeLight,
-                                contentColor = GnitsOrangeDark
-                            ),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Filled.Add, contentDescription = "Increment A")
-                        }
-                    }
-                }
+            // ── Sport-specific scoring controls ───────────────────────────
+            Text(
+                "Scoring Controls — ${match.sportType}",
+                style = SportFlowTheme.typography.headlineSmall,
+                color = TextPrimary
+            )
+            Spacer(modifier = Modifier.height(12.dp))
 
-                // Team B controls
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = match.teamB,
-                        style = SportFlowTheme.typography.labelLarge,
-                        color = TextPrimary,
-                        maxLines = 1
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledIconButton(
-                            onClick = { viewModel.decrementScoreB() },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = LiveRedBg,
-                                contentColor = LiveRed
-                            ),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Filled.Remove, contentDescription = "Decrement B")
-                        }
-                        FilledIconButton(
-                            onClick = { viewModel.incrementScoreB() },
-                            shape = CircleShape,
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = GnitsOrangeLight,
-                                contentColor = GnitsOrangeDark
-                            ),
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Filled.Add, contentDescription = "Increment B")
-                        }
-                    }
-                }
+            when (sportType) {
+                SportType.CRICKET -> CricketScoringControls(match, viewModel)
+                SportType.BASKETBALL -> BasketballScoringControls(match, viewModel)
+                SportType.BADMINTON,
+                SportType.VOLLEYBALL,
+                SportType.TABLE_TENNIS -> SetBasedScoringControls(match, viewModel, sportType)
+                else -> GenericScoringControls(match, viewModel) // Football, Kabaddi, Athletics
             }
 
             Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider(color = CardBorder)
+            Spacer(modifier = Modifier.height(16.dp))
 
-            // Add Highlight
+            // ── Highlight input ───────────────────────────────────────────
             OutlinedTextField(
                 value = highlightText,
                 onValueChange = { highlightText = it },
-                label = { Text("Add match highlight") },
+                label = { Text("Add match highlight / commentary") },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 trailingIcon = {
@@ -611,18 +561,11 @@ private fun LiveScoringPanel(
             HorizontalDivider(color = CardBorder)
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Match Lifecycle Controls
-            Text(
-                text = "Match Lifecycle",
-                style = SportFlowTheme.typography.headlineSmall,
-                color = TextPrimary
-            )
+            // ── Match Lifecycle Controls ────────────────────────────────
+            Text("Match Lifecycle", style = SportFlowTheme.typography.headlineSmall, color = TextPrimary)
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 when (match.status) {
                     MatchStatus.SCHEDULED -> {
                         PillButton(
@@ -666,17 +609,387 @@ private fun LiveScoringPanel(
                         )
                     }
                     else -> {
-                        Text(
-                            text = "Match is ${match.status.name}",
-                            style = SportFlowTheme.typography.bodyMedium,
-                            color = TextTertiary
-                        )
+                        Text("Match is ${match.status.name}", style = SportFlowTheme.typography.bodyMedium, color = TextTertiary)
                     }
                 }
             }
         }
     }
 }
+
+// ── Sport-specific score header display ──────────────────────────────────────
+
+@Composable
+private fun SportSpecificScoreHeader(match: Match, score: SportScore, sportType: SportType) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(OffWhite, RoundedCornerShape(16.dp))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Team A
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(match.teamA, style = SportFlowTheme.typography.labelLarge, color = TextPrimary, maxLines = 1)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    score.displayA,
+                    style = SportFlowTheme.typography.displayLarge,
+                    color = GnitsOrangeDark,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            // Center
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 8.dp)) {
+                if (score.centerText.isNotBlank()) {
+                    Surface(shape = RoundedCornerShape(8.dp), color = GnitsOrangeLight) {
+                        Text(
+                            score.centerText,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = SportFlowTheme.typography.labelSmall,
+                            color = GnitsOrangeDark,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                } else {
+                    Text("VS", style = SportFlowTheme.typography.displayMedium, color = TextTertiary)
+                }
+            }
+
+            // Team B
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(match.teamB, style = SportFlowTheme.typography.labelLarge, color = TextPrimary, maxLines = 1)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    score.displayB,
+                    style = SportFlowTheme.typography.displayLarge,
+                    color = InfoBlue,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+
+        // Sub-info row
+        if (score.subText.isNotBlank()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(score.subText, style = SportFlowTheme.typography.bodySmall, color = TextSecondary)
+        }
+        if (score.extras.isNotBlank()) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(score.extras, style = SportFlowTheme.typography.bodySmall, color = TextTertiary)
+        }
+    }
+}
+
+// ── Cricket Scoring Controls ──────────────────────────────────────────────────
+
+@Composable
+private fun CricketScoringControls(match: Match, viewModel: AdminViewModel) {
+    val battingTeam = if (match.currentInning == 1) "A" else "B"
+    val battingName = if (match.currentInning == 1) match.teamA else match.teamB
+    val oversField = if (match.currentInning == 1) match.oversA else match.oversB
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = GnitsOrangeLight,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(
+            "🏏 Batting: $battingName | Overs: $oversField",
+            modifier = Modifier.padding(12.dp),
+            style = SportFlowTheme.typography.labelMedium,
+            color = GnitsOrangeDark
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+
+    val actions = SportScoreEngine.getActionsForTeam(match.sportType, battingTeam)
+    // Group run actions vs special actions
+    val runActions = actions.filter { it.color != "danger" && it.actionType == "increment" }
+    val extraActions = actions.filter { it.color == "warning" || it.actionType == "special" }
+    val wicketActions = actions.filter { it.color == "danger" }
+
+    Text("Runs", style = SportFlowTheme.typography.labelMedium, color = TextSecondary)
+    Spacer(modifier = Modifier.height(8.dp))
+    ScoringActionGrid(runActions, onAction = { viewModel.applyScoringAction(it) })
+
+    Spacer(modifier = Modifier.height(12.dp))
+    Text("Extras & Events", style = SportFlowTheme.typography.labelMedium, color = TextSecondary)
+    Spacer(modifier = Modifier.height(8.dp))
+    ScoringActionGrid(extraActions + wicketActions, onAction = { viewModel.applyScoringAction(it) })
+
+    Spacer(modifier = Modifier.height(12.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(
+            onClick = { viewModel.advanceOver() },
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(24.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, GnitsOrange)
+        ) {
+            Icon(Icons.Filled.Timer, null, tint = GnitsOrange, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Over +1 Ball", color = GnitsOrange)
+        }
+        if (match.currentInning == 1) {
+            OutlinedButton(
+                onClick = { viewModel.startSecondInning() },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, InfoBlue)
+            ) {
+                Text("2nd Innings", color = InfoBlue)
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    // Undo button
+    OutlinedButton(
+        onClick = { viewModel.undoScore(battingTeam) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed)
+    ) {
+        Icon(Icons.Filled.Undo, null, tint = LiveRed, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(6.dp))
+        Text("Undo Last Run", color = LiveRed)
+    }
+}
+
+// ── Basketball Scoring Controls ───────────────────────────────────────────────
+
+@Composable
+private fun BasketballScoringControls(match: Match, viewModel: AdminViewModel) {
+    val actionsA = SportScoreEngine.getActionsForTeam(match.sportType, "A")
+    val actionsB = SportScoreEngine.getActionsForTeam(match.sportType, "B")
+    val q = match.currentQuarter
+
+    Surface(shape = RoundedCornerShape(12.dp), color = InfoBlue.copy(alpha = 0.1f), modifier = Modifier.fillMaxWidth()) {
+        Text(
+            "🏀 Q$q: ${match.teamA} ${match.q1A + match.q2A + match.q3A + match.q4A} – ${match.q1B + match.q2B + match.q3B + match.q4B} ${match.teamB}",
+            modifier = Modifier.padding(12.dp),
+            style = SportFlowTheme.typography.labelMedium,
+            color = InfoBlue
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(match.teamA, style = SportFlowTheme.typography.labelMedium, color = TextPrimary, maxLines = 1)
+            Spacer(modifier = Modifier.height(6.dp))
+            actionsA.filter { it.actionType == "increment" }.forEach { action ->
+                ScoringActionButton(action, fullWidth = true) { viewModel.applyScoringAction(it) }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            OutlinedButton(
+                onClick = { viewModel.undoScore("A") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed)
+            ) { Text("Undo", color = LiveRed, style = SportFlowTheme.typography.labelSmall) }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(match.teamB, style = SportFlowTheme.typography.labelMedium, color = TextPrimary, maxLines = 1)
+            Spacer(modifier = Modifier.height(6.dp))
+            actionsB.filter { it.actionType == "increment" }.forEach { action ->
+                ScoringActionButton(action, fullWidth = true) { viewModel.applyScoringAction(it) }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            OutlinedButton(
+                onClick = { viewModel.undoScore("B") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed)
+            ) { Text("Undo", color = LiveRed, style = SportFlowTheme.typography.labelSmall) }
+        }
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+    PillButton(
+        text = "End Quarter → Q${q + 1}",
+        onClick = { viewModel.nextQuarter() },
+        modifier = Modifier.fillMaxWidth(),
+        icon = Icons.Filled.FastForward,
+        containerColor = InfoBlue
+    )
+}
+
+// ── Set-Based Sports (Badminton / Volleyball / Table Tennis) ─────────────────
+
+@Composable
+private fun SetBasedScoringControls(match: Match, viewModel: AdminViewModel, sportType: SportType) {
+    val actionsA = SportScoreEngine.getActionsForTeam(match.sportType, "A")
+        .filter { it.actionType == "increment" }
+    val actionsB = SportScoreEngine.getActionsForTeam(match.sportType, "B")
+        .filter { it.actionType == "increment" }
+    val pointsToWin = when (sportType) {
+        SportType.VOLLEYBALL -> 25
+        SportType.TABLE_TENNIS -> 11
+        else -> 21 // Badminton
+    }
+
+    Surface(shape = RoundedCornerShape(12.dp), color = GnitsOrangeLight, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "Set ${match.currentSet} · ${match.currentSetScoreA} – ${match.currentSetScoreB}",
+                style = SportFlowTheme.typography.headlineMedium,
+                color = GnitsOrangeDark,
+                fontWeight = FontWeight.Bold
+            )
+            Text("First to $pointsToWin wins the set", style = SportFlowTheme.typography.bodySmall, color = GnitsOrange)
+        }
+    }
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(match.teamA, style = SportFlowTheme.typography.labelMedium, color = TextPrimary, maxLines = 1)
+            Spacer(modifier = Modifier.height(6.dp))
+            actionsA.forEach { action ->
+                ScoringActionButton(action, fullWidth = true) { viewModel.applyScoringAction(it) }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            PillButton(
+                text = "Set Won ✓",
+                onClick = { viewModel.completeSet("A") },
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = SuccessGreen
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(match.teamB, style = SportFlowTheme.typography.labelMedium, color = TextPrimary, maxLines = 1)
+            Spacer(modifier = Modifier.height(6.dp))
+            actionsB.forEach { action ->
+                ScoringActionButton(action, fullWidth = true) { viewModel.applyScoringAction(it) }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            PillButton(
+                text = "Set Won ✓",
+                onClick = { viewModel.completeSet("B") },
+                modifier = Modifier.fillMaxWidth(),
+                containerColor = InfoBlue
+            )
+        }
+    }
+    Spacer(modifier = Modifier.height(8.dp))
+    Text(
+        "Sets: ${match.teamA} ${match.setsWonA} – ${match.setsWonB} ${match.teamB}",
+        style = SportFlowTheme.typography.bodyMedium,
+        color = TextSecondary,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+// ── Generic (Football / Kabaddi / Athletics) ─────────────────────────────────
+
+@Composable
+private fun GenericScoringControls(match: Match, viewModel: AdminViewModel) {
+    val actionsA = SportScoreEngine.getActionsForTeam(match.sportType, "A")
+    val actionsB = SportScoreEngine.getActionsForTeam(match.sportType, "B")
+
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(match.teamA, style = SportFlowTheme.typography.labelMedium, color = TextPrimary, maxLines = 1)
+            Spacer(modifier = Modifier.height(6.dp))
+            actionsA.filter { it.actionType == "increment" }.forEach { action ->
+                ScoringActionButton(action, fullWidth = true) { viewModel.applyScoringAction(it) }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            OutlinedButton(
+                onClick = { viewModel.undoScore("A") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed)
+            ) { Text("Undo", color = LiveRed, style = SportFlowTheme.typography.labelSmall) }
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(match.teamB, style = SportFlowTheme.typography.labelMedium, color = TextPrimary, maxLines = 1)
+            Spacer(modifier = Modifier.height(6.dp))
+            actionsB.filter { it.actionType == "increment" }.forEach { action ->
+                ScoringActionButton(action, fullWidth = true) { viewModel.applyScoringAction(it) }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+            OutlinedButton(
+                onClick = { viewModel.undoScore("B") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed)
+            ) { Text("Undo", color = LiveRed, style = SportFlowTheme.typography.labelSmall) }
+        }
+    }
+}
+
+// ── Scoring Action Helpers ────────────────────────────────────────────────────
+
+@Composable
+private fun ScoringActionGrid(
+    actions: List<ScoringAction>,
+    onAction: (ScoringAction) -> Unit
+) {
+    val rows = actions.chunked(3)
+    rows.forEach { row ->
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            row.forEach { action ->
+                ScoringActionButton(action, modifier = Modifier.weight(1f), onAction = onAction)
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+    }
+}
+
+@Composable
+private fun ScoringActionButton(
+    action: ScoringAction,
+    modifier: Modifier = Modifier,
+    fullWidth: Boolean = false,
+    onAction: (ScoringAction) -> Unit
+) {
+    val bgColor = when (action.color) {
+        "danger" -> LiveRedBg
+        "warning" -> WarningAmber.copy(alpha = 0.12f)
+        else -> GnitsOrangeLight
+    }
+    val textColor = when (action.color) {
+        "danger" -> LiveRed
+        "warning" -> WarningAmber
+        else -> GnitsOrangeDark
+    }
+
+    Surface(
+        modifier = (if (fullWidth) modifier.fillMaxWidth() else modifier)
+            .clickable { onAction(action) },
+        shape = RoundedCornerShape(12.dp),
+        color = bgColor,
+        border = androidx.compose.foundation.BorderStroke(1.dp, textColor.copy(alpha = 0.3f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(action.emoji, style = SportFlowTheme.typography.headlineSmall)
+            Text(
+                action.label,
+                style = SportFlowTheme.typography.labelSmall,
+                color = textColor,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+
 
 // ── Selectable Match Card ────────────────────────────────────────────────────
 

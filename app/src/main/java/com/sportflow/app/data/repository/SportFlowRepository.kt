@@ -23,12 +23,20 @@ class SportFlowRepository @Inject constructor(
     private val auth: FirebaseAuth,
     private val messaging: FirebaseMessaging
 ) {
-    // ── Collection Names (GNITS namespace) ───────────────────────────────────
+    // ── Collection Names & FCM Topics (GNITS namespace) ─────────────────────
     companion object {
-        const val MATCHES_COLLECTION = "gnits_matches"
+        // Firestore collections
+        const val MATCHES_COLLECTION     = "gnits_matches"
         const val TOURNAMENTS_COLLECTION = "gnits_tournaments"
-        const val USERS_COLLECTION = "gnits_users"
-        const val PAYMENTS_COLLECTION = "gnits_payments"
+        const val USERS_COLLECTION       = "gnits_users"
+        const val PAYMENTS_COLLECTION    = "gnits_payments"
+
+        // FCM topics — must match what Cloud Functions publishes to
+        const val FCM_TOPIC_ALL         = "gnits_sports_all"
+        const val FCM_TOPIC_SCORES      = "gnits_score_updates"
+        const val FCM_TOPIC_MATCH_START = "gnits_match_start"
+        const val FCM_TOPIC_TOURNAMENT  = "gnits_tournaments"
+        const val FCM_TOPIC_PAYMENT     = "gnits_payment"
     }
 
     // ── Matches — Real-time Listeners ────────────────────────────────────────
@@ -124,35 +132,115 @@ class SportFlowRepository @Inject constructor(
         return docRef.id
     }
 
-    // ── Live Scoring Engine — Atomic Updates ────────────────────────────────
+    // ── Live Scoring Engine — Sport-Aware Atomic Updates ────────────────────
 
-    /** Atomically increment a team's score — also publishes to FCM score topic */
-    suspend fun incrementScore(matchId: String, team: String) {
-        val field = if (team == "A") "scoreA" else "scoreB"
+    /**
+     * Universal scoring entry point. Admin calls this for every button tap.
+     * The [action] carries the Firestore field name and delta from [SportScoreEngine].
+     */
+    suspend fun applyScoringAction(matchId: String, action: com.sportflow.app.data.model.ScoringAction) {
+        if (action.delta == 0) return // "special" actions like Dot Ball, Foul (just highlights)
+
         firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
-            .update(field, FieldValue.increment(1))
+            .update(action.field, FieldValue.increment(action.delta.toLong()))
             .await()
 
-        // Read updated doc to build a meaningful notification
-        val doc = firestore.collection(MATCHES_COLLECTION)
-            .document(matchId).get().await()
-        val teamAName = doc.getString("teamA") ?: "Team A"
-        val teamBName = doc.getString("teamB") ?: "Team B"
-        val scoreA = doc.getLong("scoreA")?.toInt() ?: 0
-        val scoreB = doc.getLong("scoreB")?.toInt() ?: 0
-        val scoringTeam = if (team == "A") teamAName else teamBName
+        // Also keep scoreA/scoreB in sync for set-based sports
+        // (they represent sets won, updated separately via newSetWon())
 
-        // Write a notification trigger document — Firebase Extensions or Cloud Functions
-        // can pick this up and fan-out to FCM topic. For direct topic messaging,
-        // we store in gnits_notifications so Cloud Functions can send it.
+        // Read back for notification
+        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val teamA = doc.getString("teamA") ?: "Team A"
+        val teamB = doc.getString("teamB") ?: "Team B"
+        val sport = doc.getString("sportType") ?: ""
+        val sa = doc.getLong("scoreA")?.toInt() ?: 0
+        val sb = doc.getLong("scoreB")?.toInt() ?: 0
+        val wA = doc.getLong("wicketsA")?.toInt() ?: 0
+        val wB = doc.getLong("wicketsB")?.toInt() ?: 0
+        val curSetA = doc.getLong("currentSetScoreA")?.toInt() ?: 0
+        val curSetB = doc.getLong("currentSetScoreB")?.toInt() ?: 0
+
+        val scoreText = when (com.sportflow.app.data.model.SportType.fromString(sport)) {
+            com.sportflow.app.data.model.SportType.CRICKET ->
+                "${action.label} by ${if(action.team=="A") teamA else teamB} | $teamA $sa/$wA vs $teamB $sb/$wB"
+            com.sportflow.app.data.model.SportType.BADMINTON,
+            com.sportflow.app.data.model.SportType.VOLLEYBALL,
+            com.sportflow.app.data.model.SportType.TABLE_TENNIS ->
+                "${action.emoji} ${action.label} by ${if(action.team=="A") teamA else teamB} | Set: $curSetA-$curSetB"
+            else -> "${action.emoji} ${action.label} by ${if(action.team=="A") teamA else teamB} | $teamA $sa – $sb $teamB"
+        }
+
         pushNotificationTrigger(
             type = "score_update",
-            title = "⚽ Goal! $scoringTeam scores!",
-            body = "$teamAName $scoreA – $scoreB $teamBName",
+            title = "🔴 ${action.emoji} $sport Update",
+            body = scoreText,
             matchId = matchId,
             topic = FCM_TOPIC_SCORES
         )
+    }
+
+    /** For set-based sports: complete current set and start next one */
+    suspend fun completeSet(matchId: String, winnerTeam: String) {
+        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val curSetA = doc.getLong("currentSetScoreA")?.toInt() ?: 0
+        val curSetB = doc.getLong("currentSetScoreB")?.toInt() ?: 0
+        val currentSet = doc.getLong("currentSet")?.toInt() ?: 1
+        val existing = doc.getString("completedSets") ?: ""
+        val newCompleted = if (existing.isBlank()) "$curSetA-$curSetB" else "$existing,$curSetA-$curSetB"
+        val setsField = if (winnerTeam == "A") "setsWonA" else "setsWonB"
+
+        firestore.collection(MATCHES_COLLECTION).document(matchId)
+            .update(mapOf(
+                "completedSets" to newCompleted,
+                setsField to FieldValue.increment(1),
+                "currentSetScoreA" to 0,
+                "currentSetScoreB" to 0,
+                "currentSet" to (currentSet + 1)
+            )).await()
+    }
+
+    /** For cricket: advance overs after 6 legal deliveries */
+    suspend fun advanceOver(matchId: String, inning: Int) {
+        val field = if (inning == 1) "oversA" else "oversB"
+        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val current = doc.getString(field) ?: "0.0"
+        val parts = current.split(".")
+        val overs = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val balls = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        val newOvers = if (balls >= 5) "${overs + 1}.0" else "$overs.${balls + 1}"
+        firestore.collection(MATCHES_COLLECTION).document(matchId)
+            .update(field, newOvers).await()
+    }
+
+    /** For cricket: start 2nd inning — set target */
+    suspend fun startSecondInning(matchId: String) {
+        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val firstInningRuns = doc.getLong("scoreA")?.toInt() ?: 0
+        firestore.collection(MATCHES_COLLECTION).document(matchId)
+            .update(mapOf(
+                "currentInning" to 2,
+                "targetRuns" to (firstInningRuns + 1),
+                "currentPeriod" to "2nd Innings"
+            )).await()
+    }
+
+    /** For basketball: advance to next quarter */
+    suspend fun nextQuarter(matchId: String) {
+        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val q = (doc.getLong("currentQuarter")?.toInt() ?: 1) + 1
+        firestore.collection(MATCHES_COLLECTION).document(matchId)
+            .update(mapOf(
+                "currentQuarter" to q,
+                "currentPeriod" to "Q$q"
+            )).await()
+    }
+
+    /** Legacy increment — still used for football/kabaddi direct scoreA/B changes */
+    suspend fun incrementScore(matchId: String, team: String) {
+        val field = if (team == "A") "scoreA" else "scoreB"
+        firestore.collection(MATCHES_COLLECTION).document(matchId)
+            .update(field, FieldValue.increment(1)).await()
     }
 
     /** Atomically decrement a team's score (min 0) */
@@ -536,15 +624,6 @@ class SportFlowRepository @Inject constructor(
     }
 
     // ── FCM Topic Subscriptions ─────────────────────────────────────────────
-
-    companion object {
-        // FCM topics — must match what Cloud Functions publishes to
-        const val FCM_TOPIC_ALL          = "gnits_sports_all"
-        const val FCM_TOPIC_SCORES       = "gnits_score_updates"
-        const val FCM_TOPIC_MATCH_START  = "gnits_match_start"
-        const val FCM_TOPIC_TOURNAMENT   = "gnits_tournaments"
-        const val FCM_TOPIC_PAYMENT      = "gnits_payment"
-    }
 
     fun subscribeToTopic(topic: String) {
         messaging.subscribeToTopic(topic)
