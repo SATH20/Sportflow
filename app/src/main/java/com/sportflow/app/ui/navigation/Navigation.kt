@@ -11,16 +11,21 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
+import com.sportflow.app.data.model.UserRole
 import com.sportflow.app.ui.screens.admin.AdminDashboardScreen
+import com.sportflow.app.ui.screens.auth.LoginScreen
 import com.sportflow.app.ui.screens.bracket.BracketViewScreen
 import com.sportflow.app.ui.screens.events.EventsScreen
 import com.sportflow.app.ui.screens.home.HomeFeedScreen
 import com.sportflow.app.ui.screens.live.LiveMatchCenterScreen
 import com.sportflow.app.ui.screens.profile.ProfileScreen
 import com.sportflow.app.ui.theme.*
+import com.sportflow.app.ui.viewmodel.AuthViewModel
 
 sealed class Screen(
     val route: String,
@@ -28,6 +33,7 @@ sealed class Screen(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector
 ) {
+    data object Login : Screen("login", "Login", Icons.Filled.Login, Icons.Outlined.Login)
     data object Home : Screen("home", "Home", Icons.Filled.Home, Icons.Outlined.Home)
     data object Events : Screen("events", "Events", Icons.Filled.Event, Icons.Outlined.Event)
     data object MyMatches : Screen("my_matches", "My Matches", Icons.Filled.SportsSoccer, Icons.Outlined.SportsSoccer)
@@ -41,6 +47,9 @@ sealed class Screen(
 
 @Composable
 fun SportFlowNavHost() {
+    val authViewModel: AuthViewModel = hiltViewModel()
+    val authState by authViewModel.uiState.collectAsStateWithLifecycle()
+
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
@@ -55,6 +64,9 @@ fun SportFlowNavHost() {
     val showBottomBar = bottomNavItems.any { screen ->
         currentDestination?.hierarchy?.any { it.route == screen.route } == true
     }
+
+    // Determine start destination based on auth state
+    val startDestination = if (authState.isLoggedIn) Screen.Home.route else Screen.Login.route
 
     Scaffold(
         containerColor = PureWhite,
@@ -85,11 +97,11 @@ fun SportFlowNavHost() {
                             },
                             selected = selected,
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = PlayoGreen,
-                                selectedTextColor = PlayoGreen,
+                                selectedIconColor = GnitsOrange,
+                                selectedTextColor = GnitsOrange,
                                 unselectedIconColor = NavInactive,
                                 unselectedTextColor = NavInactive,
-                                indicatorColor = PlayoGreenLight
+                                indicatorColor = GnitsOrangeLight
                             ),
                             onClick = {
                                 navController.navigate(screen.route) {
@@ -109,13 +121,24 @@ fun SportFlowNavHost() {
     ) { innerPadding ->
         NavHost(
             navController = navController,
-            startDestination = Screen.Home.route,
+            startDestination = startDestination,
             modifier = Modifier.padding(innerPadding),
             enterTransition = { fadeIn(tween(200)) },
             exitTransition = { fadeOut(tween(200)) }
         ) {
+            // Auth Screen
+            composable(Screen.Login.route) {
+                LoginScreen(
+                    navController = navController,
+                    viewModel = authViewModel
+                )
+            }
+
             composable(Screen.Home.route) {
-                HomeFeedScreen(navController = navController)
+                HomeFeedScreen(
+                    navController = navController,
+                    isAdmin = authState.userRole == UserRole.ADMIN
+                )
             }
             composable(Screen.Events.route) {
                 EventsScreen(navController = navController)
@@ -124,7 +147,10 @@ fun SportFlowNavHost() {
                 LiveMatchCenterScreen(navController = navController)
             }
             composable(Screen.Profile.route) {
-                ProfileScreen(navController = navController)
+                ProfileScreen(
+                    navController = navController,
+                    authViewModel = authViewModel
+                )
             }
             composable(Screen.LiveMatch.route) {
                 LiveMatchCenterScreen(navController = navController)
@@ -144,6 +170,7 @@ fun SportFlowNavHost() {
                     navController = navController
                 )
             }
+            // Admin route — only accessible if role == ADMIN
             composable(Screen.Admin.route) {
                 AdminDashboardScreen(navController = navController)
             }

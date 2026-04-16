@@ -2,6 +2,7 @@ package com.sportflow.app.di
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -14,17 +15,16 @@ object AppModule {
 
     @Provides
     @Singleton
-    fun provideFirestore(): FirebaseFirestore? = try {
+    fun provideFirestore(): FirebaseFirestore =
         FirebaseFirestore.getInstance()
-    } catch (e: Exception) {
-        null
-    }
 
     @Provides
     @Singleton
-    fun provideFirebaseAuth(): FirebaseAuth? = try {
+    fun provideFirebaseAuth(): FirebaseAuth =
         FirebaseAuth.getInstance()
-    } catch (e: Exception) {
-        null
-    }
+
+    @Provides
+    @Singleton
+    fun provideFirebaseMessaging(): FirebaseMessaging =
+        FirebaseMessaging.getInstance()
 }

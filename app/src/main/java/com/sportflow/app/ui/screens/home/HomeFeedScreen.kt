@@ -18,7 +18,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +36,7 @@ import com.sportflow.app.ui.viewmodel.HomeViewModel
 @Composable
 fun HomeFeedScreen(
     navController: NavHostController,
+    isAdmin: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -47,7 +47,7 @@ fun HomeFeedScreen(
             .background(ScreenBg),
         contentPadding = PaddingValues(bottom = 24.dp)
     ) {
-        // ── Search Bar + Greeting ────────────────────────────────────────
+        // ── Search Bar + GNITS Greeting ──────────────────────────────────
         item {
             Column(
                 modifier = Modifier
@@ -62,27 +62,44 @@ fun HomeFeedScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Good evening! 👋",
+                            text = "Welcome to GNITS! 🏆",
                             style = SportFlowTheme.typography.bodyMedium,
                             color = TextSecondary
                         )
                         Text(
-                            text = "SportFlow",
+                            text = "GNITS Sports",
                             style = SportFlowTheme.typography.displayLarge,
                             color = TextPrimary
                         )
                     }
-                    IconButton(
-                        onClick = { },
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(OffWhite, CircleShape)
-                    ) {
-                        Icon(
-                            Icons.Outlined.Notifications,
-                            contentDescription = "Notifications",
-                            tint = TextSecondary
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // Admin shortcut — only visible for admin role
+                        if (isAdmin) {
+                            IconButton(
+                                onClick = { navController.navigate("admin") },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .background(GnitsOrangeLight, CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Filled.AdminPanelSettings,
+                                    contentDescription = "Admin Portal",
+                                    tint = GnitsOrange
+                                )
+                            }
+                        }
+                        IconButton(
+                            onClick = { },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(OffWhite, CircleShape)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Notifications,
+                                contentDescription = "Notifications",
+                                tint = TextSecondary
+                            )
+                        }
                     }
                 }
 
@@ -107,11 +124,25 @@ fun HomeFeedScreen(
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = "Search tournaments, events...",
+                            text = "Search GNITS tournaments, events...",
                             style = SportFlowTheme.typography.bodyMedium,
                             color = TextTertiary
                         )
                     }
+                }
+            }
+        }
+
+        // ── Loading State ────────────────────────────────────────────────
+        if (uiState.isLoading) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = GnitsOrange)
                 }
             }
         }
@@ -155,27 +186,62 @@ fun HomeFeedScreen(
             }
         }
 
-        // ── Suggested Events Feed ────────────────────────────────────────
-        item {
-            SectionHeader(
-                title = "Suggested For You",
-                actionText = "See All",
-                onAction = { navController.navigate("events") }
-            )
+        // ── Upcoming Events ─────────────────────────────────────────────
+        if (uiState.upcomingMatches.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "Upcoming Matches",
+                    actionText = "See All",
+                    onAction = { navController.navigate("events") }
+                )
+            }
+
+            items(uiState.upcomingMatches) { match ->
+                EventFeedCard(
+                    match = match,
+                    onClick = { }
+                )
+            }
         }
 
-        items(uiState.upcomingMatches) { match ->
-            EventFeedCard(
-                match = match,
-                onClick = { }
-            )
+        // ── Empty State ─────────────────────────────────────────────────
+        if (!uiState.isLoading && uiState.liveMatches.isEmpty() && uiState.upcomingMatches.isEmpty() && uiState.tournaments.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Outlined.SportsScore,
+                            contentDescription = null,
+                            tint = TextTertiary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No events yet",
+                            style = SportFlowTheme.typography.headlineMedium,
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Ask your Department Sports Coordinator to create matches",
+                            style = SportFlowTheme.typography.bodyMedium,
+                            color = TextTertiary
+                        )
+                    }
+                }
+            }
         }
 
         // ── Active Tournaments ───────────────────────────────────────────
         if (uiState.tournaments.size > 1) {
             item {
                 SectionHeader(
-                    title = "Tournaments",
+                    title = "All Tournaments",
                     actionText = "View All",
                     onAction = { navController.navigate("events") }
                 )
@@ -324,16 +390,16 @@ private fun TopTournamentHero(
             .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
     ) {
-        // Gradient background (simulating hero image)
+        // GNITS Orange gradient background
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.linearGradient(
                         colors = listOf(
-                            PlayoGreen,
-                            PlayoGreenDark,
-                            Color(0xFF064E3B)
+                            GnitsOrange,
+                            GnitsOrangeDark,
+                            Color(0xFF8B5E0C)
                         )
                     )
                 )
@@ -413,7 +479,7 @@ private fun TopTournamentHero(
                         color = Color.White.copy(alpha = 0.5f)
                     )
                     Text(
-                        text = tournament.prizePool,
+                        text = tournament.prizePool.ifEmpty { "GNITS Inter-Dept" },
                         style = SportFlowTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.9f),
                         fontWeight = FontWeight.Bold
@@ -433,7 +499,7 @@ private fun TopTournamentHero(
     }
 }
 
-// ── Event Feed Card — Playo-style ────────────────────────────────────────────
+// ── Event Feed Card ──────────────────────────────────────────────────────────
 
 @Composable
 private fun EventFeedCard(
@@ -453,7 +519,12 @@ private fun EventFeedCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SportTypeChip(sportType = match.sportType)
-                SkillTag(level = listOf("Beginner", "Intermediate", "Advanced").random())
+                if (match.teamADepartment.isNotBlank()) {
+                    StatusChip(
+                        text = "${match.teamADepartment} vs ${match.teamBDepartment}",
+                        color = GnitsOrange
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -484,30 +555,28 @@ private fun EventFeedCard(
                         color = TextTertiary
                     )
                 }
-                Text("•", color = TextTertiary, fontSize = 10.sp)
-                Text(
-                    text = match.tournamentName,
-                    style = SportFlowTheme.typography.bodySmall,
-                    color = InfoBlue,
-                    fontWeight = FontWeight.SemiBold
-                )
+                if (match.tournamentName.isNotBlank()) {
+                    Text("•", color = TextTertiary, fontSize = 10.sp)
+                    Text(
+                        text = match.tournamentName,
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = InfoBlue,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Slots indicator
-            SlotsIndicator(
-                filled = (6..14).random(),
-                total = 16
-            )
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            PillButton(
-                text = "Join Now",
-                onClick = onClick,
-                modifier = Modifier.fillMaxWidth(),
-                icon = Icons.Filled.ArrowForward
+            StatusChip(
+                text = match.status.name,
+                color = when (match.status) {
+                    MatchStatus.SCHEDULED -> InfoBlue
+                    MatchStatus.LIVE -> LiveRed
+                    MatchStatus.HALFTIME -> WarningAmber
+                    MatchStatus.COMPLETED -> SuccessGreen
+                    MatchStatus.CANCELLED -> ErrorRed
+                }
             )
         }
     }
@@ -534,7 +603,7 @@ private fun TournamentCompactCard(
                     text = tournament.status.name.replace("_", " "),
                     color = when (tournament.status) {
                         TournamentStatus.REGISTRATION -> WarningAmber
-                        TournamentStatus.IN_PROGRESS -> PlayoGreen
+                        TournamentStatus.IN_PROGRESS -> GnitsOrange
                         TournamentStatus.COMPLETED -> TextTertiary
                         TournamentStatus.CANCELLED -> ErrorRed
                     }
@@ -542,7 +611,7 @@ private fun TournamentCompactCard(
                 Icon(
                     Icons.Filled.EmojiEvents,
                     contentDescription = null,
-                    tint = PlayoGreen,
+                    tint = GnitsOrange,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -569,14 +638,14 @@ private fun TournamentCompactCard(
             ) {
                 Column {
                     Text(
-                        text = "Prize",
+                        text = "Venue",
                         style = SportFlowTheme.typography.labelSmall,
                         color = TextTertiary
                     )
                     Text(
-                        text = tournament.prizePool,
+                        text = tournament.venue.ifEmpty { "TBD" },
                         style = SportFlowTheme.typography.labelLarge,
-                        color = PlayoGreen,
+                        color = GnitsOrange,
                         fontWeight = FontWeight.Bold
                     )
                 }

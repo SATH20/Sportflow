@@ -2,7 +2,6 @@ package com.sportflow.app.ui.screens.live
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -17,12 +16,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -67,10 +64,62 @@ fun LiveMatchCenterScreen(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${uiState.liveMatches.size} matches in progress",
+                    text = if (uiState.liveMatches.isEmpty()) "No live matches" else "${uiState.liveMatches.size} matches in progress",
                     style = SportFlowTheme.typography.bodyMedium,
                     color = TextSecondary
                 )
+            }
+        }
+
+        // Loading
+        if (uiState.isLoading) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = GnitsOrange)
+                }
+            }
+        }
+
+        // Empty state
+        if (!uiState.isLoading && uiState.liveMatches.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .background(GnitsOrangeLight, RoundedCornerShape(20.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Filled.SportsScore,
+                                contentDescription = null,
+                                tint = GnitsOrange,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No Live Matches",
+                            style = SportFlowTheme.typography.headlineLarge,
+                            color = TextPrimary,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Check back when GNITS tournaments are underway",
+                            style = SportFlowTheme.typography.bodyMedium,
+                            color = TextTertiary,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
         }
 
@@ -112,10 +161,13 @@ fun LiveMatchCenterScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            StatusChip(text = match.tournamentName, color = InfoBlue)
+                            StatusChip(
+                                text = match.tournamentName.ifEmpty { "GNITS Match" },
+                                color = InfoBlue
+                            )
                             StatusChip(
                                 text = match.round.ifEmpty { match.currentPeriod },
-                                color = PlayoGreen
+                                color = GnitsOrange
                             )
                         }
 
@@ -135,8 +187,8 @@ fun LiveMatchCenterScreen(
                         // Timer
                         Surface(
                             shape = RoundedCornerShape(16.dp),
-                            color = PlayoGreenLight,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, PlayoGreen.copy(alpha = 0.3f))
+                            color = GnitsOrangeLight,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, GnitsOrange.copy(alpha = 0.3f))
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
@@ -146,13 +198,13 @@ fun LiveMatchCenterScreen(
                                 Icon(
                                     Icons.Filled.Timer,
                                     contentDescription = null,
-                                    tint = PlayoGreenDark,
+                                    tint = GnitsOrangeDark,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
                                     text = "${match.currentPeriod} · ${match.elapsedTime}",
                                     style = SportFlowTheme.typography.timerDisplay,
-                                    color = PlayoGreenDark
+                                    color = GnitsOrangeDark
                                 )
                             }
                         }
@@ -234,20 +286,20 @@ fun LiveMatchCenterScreen(
                         icon = Icons.Filled.SportsSoccer,
                         value = "${match.scoreA + match.scoreB}",
                         label = "Total Goals",
-                        accentColor = PlayoGreen,
+                        accentColor = GnitsOrange,
                         modifier = Modifier.weight(1f)
                     )
                     StatTile(
                         icon = Icons.Filled.Timer,
-                        value = match.elapsedTime,
+                        value = match.elapsedTime.ifEmpty { "--" },
                         label = "Elapsed",
                         accentColor = InfoBlue,
                         modifier = Modifier.weight(1f)
                     )
                     StatTile(
-                        icon = Icons.Filled.Visibility,
-                        value = "${(1000..5000).random()}",
-                        label = "Watching",
+                        icon = Icons.Filled.Stadium,
+                        value = match.venue.split(" ").first(),
+                        label = "Venue",
                         accentColor = LiveRed,
                         modifier = Modifier.weight(1f)
                     )
@@ -268,10 +320,10 @@ private fun MatchTab(
     Surface(
         modifier = Modifier.clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
-        color = if (isSelected) PlayoGreenLight else PureWhite,
+        color = if (isSelected) GnitsOrangeLight else PureWhite,
         border = androidx.compose.foundation.BorderStroke(
             width = if (isSelected) 1.5.dp else 1.dp,
-            color = if (isSelected) PlayoGreen else CardBorder
+            color = if (isSelected) GnitsOrange else CardBorder
         )
     ) {
         Column(
@@ -281,7 +333,7 @@ private fun MatchTab(
             Text(
                 text = match.sportType,
                 style = SportFlowTheme.typography.labelSmall,
-                color = if (isSelected) PlayoGreenDark else TextTertiary
+                color = if (isSelected) GnitsOrangeDark else TextTertiary
             )
             Text(
                 text = "${match.teamA.take(3).uppercase()} vs ${match.teamB.take(3).uppercase()}",
@@ -310,7 +362,7 @@ private fun TimelineItem(text: String) {
             Box(
                 modifier = Modifier
                     .size(10.dp)
-                    .background(PlayoGreen, CircleShape)
+                    .background(GnitsOrange, CircleShape)
             )
             Box(
                 modifier = Modifier

@@ -4,8 +4,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
-// ── "Ice & Action" Design System ────────────────────────────────────────────
-// Inspired by Playo's clean, consumer-grade sports aesthetic
+// ── "Ice & Action" Design System — GNITS Orange Accent ──────────────────────
+// Clean white base with GNITS Orange (#F09819) as the primary accent
 
 // Backgrounds
 val PureWhite = Color(0xFFFFFFFF)
@@ -18,10 +18,10 @@ val CardBorder = Color(0xFFE2E8F0)
 val CardShadow = Color(0x0D000000)        // 5% black
 val DividerColor = Color(0xFFE2E8F0)
 
-// Primary Accent — "Playo Green"
-val PlayoGreen = Color(0xFF22C55E)
-val PlayoGreenLight = Color(0xFFDCFCE7)
-val PlayoGreenDark = Color(0xFF16A34A)
+// Primary Accent — "GNITS Orange"
+val GnitsOrange = Color(0xFFF09819)
+val GnitsOrangeLight = Color(0xFFFEF3E2)
+val GnitsOrangeDark = Color(0xFFE08C15)
 
 // Secondary Accent — "Info Blue"
 val InfoBlue = Color(0xFF635BFF)
@@ -32,25 +32,26 @@ val InfoBlueDark = Color(0xFF4338CA)
 val TextPrimary = Color(0xFF0F172A)
 val TextSecondary = Color(0xFF64748B)
 val TextTertiary = Color(0xFF94A3B8)
-val TextOnGreen = Color(0xFFFFFFFF)
+val TextOnOrange = Color(0xFFFFFFFF)
 val TextLink = Color(0xFF635BFF)
 
 // Semantic
 val LiveRed = Color(0xFFEF4444)
 val LiveRedBg = Color(0xFFFEF2F2)
 val SuccessGreen = Color(0xFF22C55E)
+val SuccessGreenLight = Color(0xFFDCFCE7)
 val WarningAmber = Color(0xFFF59E0B)
 val WarningAmberBg = Color(0xFFFFFBEB)
 val ErrorRed = Color(0xFFEF4444)
 
 // ── Glow & Space ────────────────────────────────────────────────────────────
-// New Colors for Login/Glass UI
-val DeepSpace = Color(0xFF0F172A)
+// Login / Glass UI
+val DeepSpace = Color(0xFF1A0E00)
 val SoftWhite = Color(0xFFF8FAFC)
 val SoftWhiteDim = Color(0xFF94A3B8)
-val AntigravityBlue = Color(0xFF635BFF)
-val AntigravityBlueLight = Color(0xFF818CF8)
-val CyanPulse = Color(0xFF22D3EE)
+val GnitsOrangeGlow = Color(0xFFF09819)
+val GnitsOrangeGlowLight = Color(0xFFFBD38D)
+val WarmPulse = Color(0xFFFF6B35)
 val GlassBorder = Color(0x33FFFFFF)
 
 // Glassmorphism
@@ -65,12 +66,12 @@ val TagAdvanced = Color(0xFFEF4444)
 val TagPro = Color(0xFF635BFF)
 
 // Bottom Nav
-val NavActive = Color(0xFF22C55E)
+val NavActive = Color(0xFFF09819)
 val NavInactive = Color(0xFF94A3B8)
 
 // Bracket
 val BracketLine = Color(0xFFCBD5E1)       // Stadium Mist
-val BracketWinnerPath = Color(0xFF22C55E) // Playo Green winner path
+val BracketWinnerPath = Color(0xFFF09819) // GNITS Orange winner path
 
 @Immutable
 data class SportFlowColors(
@@ -78,9 +79,9 @@ data class SportFlowColors(
     val screenBg: Color = ScreenBg,
     val cardSurface: Color = CardSurface,
     val cardBorder: Color = CardBorder,
-    val primary: Color = PlayoGreen,
-    val primaryLight: Color = PlayoGreenLight,
-    val primaryDark: Color = PlayoGreenDark,
+    val primary: Color = GnitsOrange,
+    val primaryLight: Color = GnitsOrangeLight,
+    val primaryDark: Color = GnitsOrangeDark,
     val secondary: Color = InfoBlue,
     val secondaryLight: Color = InfoBlueLight,
     val textPrimary: Color = TextPrimary,

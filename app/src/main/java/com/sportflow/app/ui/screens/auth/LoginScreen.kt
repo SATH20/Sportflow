@@ -4,10 +4,12 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -15,7 +17,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -25,19 +26,19 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.sportflow.app.data.model.GnitsDepartment
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AuthViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(
     navController: NavHostController,
-    viewModel: AuthViewModel = hiltViewModel()
+    viewModel: AuthViewModel
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val focusManager = LocalFocusManager.current
@@ -45,8 +46,11 @@ fun LoginScreen(
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    var rollNumber by remember { mutableStateOf("") }
+    var selectedDepartment by remember { mutableStateOf("") }
     var isSignUp by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
+    var departmentExpanded by remember { mutableStateOf(false) }
 
     // Navigate on success
     LaunchedEffect(uiState.isLoggedIn) {
@@ -65,6 +69,7 @@ fun LoginScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -87,8 +92,8 @@ fun LoginScreen(
                     .background(
                         Brush.linearGradient(
                             colors = listOf(
-                                AntigravityBlue.copy(alpha = logoGlow),
-                                CyanPulse.copy(alpha = logoGlow * 0.7f)
+                                GnitsOrangeGlow.copy(alpha = logoGlow),
+                                WarmPulse.copy(alpha = logoGlow * 0.7f)
                             )
                         ),
                         CircleShape
@@ -97,7 +102,7 @@ fun LoginScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Filled.FlashOn,
+                    imageVector = Icons.Filled.EmojiEvents,
                     contentDescription = null,
                     tint = SoftWhite,
                     modifier = Modifier.size(40.dp)
@@ -107,17 +112,17 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = "SportFlow",
+                text = "GNITS Sports",
                 style = SportFlowTheme.typography.displayLarge,
                 color = SoftWhite
             )
             Text(
-                text = "Your game, your flow",
-                style = SportFlowTheme.typography.bodyLarge,
+                text = "G. Narayanamma Institute of Technology & Science",
+                style = SportFlowTheme.typography.bodySmall,
                 color = SoftWhiteDim
             )
 
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
             // Auth Form
             GlassCard(
@@ -130,7 +135,7 @@ fun LoginScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = if (isSignUp) "Create Account" else "Welcome Back",
+                        text = if (isSignUp) "Create Student Account" else "Welcome Back",
                         style = SportFlowTheme.typography.headlineLarge,
                         color = SoftWhite
                     )
@@ -147,6 +152,78 @@ fun LoginScreen(
                             imeAction = ImeAction.Next,
                             onImeAction = { focusManager.moveFocus(FocusDirection.Down) }
                         )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Roll Number
+                        AuthTextField(
+                            value = rollNumber,
+                            onValueChange = { rollNumber = it },
+                            label = "Roll Number",
+                            icon = Icons.Outlined.Badge,
+                            imeAction = ImeAction.Next,
+                            onImeAction = { focusManager.moveFocus(FocusDirection.Down) }
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Department Dropdown
+                        ExposedDropdownMenuBox(
+                            expanded = departmentExpanded,
+                            onExpandedChange = { departmentExpanded = !departmentExpanded }
+                        ) {
+                            OutlinedTextField(
+                                value = if (selectedDepartment.isNotBlank())
+                                    GnitsDepartment.fromCode(selectedDepartment)?.displayName ?: selectedDepartment
+                                else "",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = {
+                                    Text(
+                                        text = "Department",
+                                        style = SportFlowTheme.typography.bodyMedium
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Outlined.School,
+                                        contentDescription = null,
+                                        tint = SoftWhiteDim
+                                    )
+                                },
+                                trailingIcon = {
+                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded)
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = GnitsOrangeGlow,
+                                    unfocusedBorderColor = GlassBorder,
+                                    cursorColor = GnitsOrangeGlow,
+                                    focusedLabelColor = GnitsOrangeGlowLight,
+                                    unfocusedLabelColor = SoftWhiteDim,
+                                    focusedTextColor = SoftWhite,
+                                    unfocusedTextColor = SoftWhite,
+                                    focusedTrailingIconColor = SoftWhiteDim,
+                                    unfocusedTrailingIconColor = SoftWhiteDim
+                                ),
+                                singleLine = true
+                            )
+                            ExposedDropdownMenu(
+                                expanded = departmentExpanded,
+                                onDismissRequest = { departmentExpanded = false }
+                            ) {
+                                GnitsDepartment.entries.forEach { dept ->
+                                    DropdownMenuItem(
+                                        text = { Text("${dept.name} — ${dept.displayName}") },
+                                        onClick = {
+                                            selectedDepartment = dept.name
+                                            departmentExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
@@ -176,7 +253,7 @@ fun LoginScreen(
                         imeAction = ImeAction.Done,
                         onImeAction = {
                             focusManager.clearFocus()
-                            if (isSignUp) viewModel.signUp(email, password, name)
+                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
                             else viewModel.signIn(email, password)
                         }
                     )
@@ -199,7 +276,7 @@ fun LoginScreen(
                         else if (isSignUp) "Create Account"
                         else "Sign In",
                         onClick = {
-                            if (isSignUp) viewModel.signUp(email, password, name)
+                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
                             else viewModel.signIn(email, password)
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -215,7 +292,7 @@ fun LoginScreen(
                             text = if (isSignUp) "Already have an account? Sign In"
                             else "Don't have an account? Sign Up",
                             style = SportFlowTheme.typography.bodyMedium,
-                            color = AntigravityBlueLight
+                            color = GnitsOrangeGlowLight
                         )
                     }
                 }
@@ -277,10 +354,10 @@ private fun AuthTextField(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
         colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = AntigravityBlue,
+            focusedBorderColor = GnitsOrangeGlow,
             unfocusedBorderColor = GlassBorder,
-            cursorColor = AntigravityBlue,
-            focusedLabelColor = AntigravityBlueLight,
+            cursorColor = GnitsOrangeGlow,
+            focusedLabelColor = GnitsOrangeGlowLight,
             unfocusedLabelColor = SoftWhiteDim,
             focusedTextColor = SoftWhite,
             unfocusedTextColor = SoftWhite

@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.sp
 import com.sportflow.app.ui.theme.*
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// SPORT CARD — Clean, minimal card with subtle shadow (Playo-style)
+// SPORT CARD — Clean, minimal card with subtle shadow
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @Composable
@@ -93,7 +93,7 @@ fun GlassHeroCard(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// PILL BUTTON — Rounded action button (Playo-style)
+// PILL BUTTON — Rounded action button (GNITS Orange accent)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @Composable
@@ -102,7 +102,7 @@ fun PillButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
-    containerColor: Color = PlayoGreen,
+    containerColor: Color = GnitsOrange,
     contentColor: Color = Color.White,
     enabled: Boolean = true
 ) {
@@ -208,7 +208,7 @@ fun SlotsIndicator(
                 .fillMaxWidth()
                 .height(6.dp)
                 .clip(RoundedCornerShape(3.dp)),
-            color = if (remaining <= 2) LiveRed else PlayoGreen,
+            color = if (remaining <= 2) LiveRed else GnitsOrange,
             trackColor = CardBorder
         )
     }
@@ -365,7 +365,7 @@ fun ScoreDisplay(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// TEAM AVATAR — Circle with initials
+// TEAM AVATAR — Circle with initials (GNITS Orange gradient)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @Composable
@@ -384,7 +384,7 @@ fun TeamAvatar(
             .size(size)
             .background(
                 Brush.linearGradient(
-                    colors = listOf(PlayoGreen, PlayoGreenDark)
+                    colors = listOf(GnitsOrange, GnitsOrangeDark)
                 ),
                 CircleShape
             ),
@@ -478,7 +478,7 @@ fun SectionHeader(
                 Text(
                     text = actionText,
                     style = SportFlowTypography().labelLarge,
-                    color = InfoBlue
+                    color = GnitsOrange
                 )
             }
         }
@@ -500,6 +500,10 @@ fun SportTypeChip(
         "cricket" -> Icons.Filled.SportsCricket
         "badminton" -> Icons.Filled.SportsTennis
         "tennis" -> Icons.Filled.SportsTennis
+        "volleyball" -> Icons.Filled.SportsVolleyball
+        "table tennis" -> Icons.Filled.SportsTennis
+        "kabaddi" -> Icons.Filled.Sports
+        "athletics" -> Icons.Filled.DirectionsRun
         else -> Icons.Filled.Sports
     }
 
@@ -547,7 +551,7 @@ fun GlassCard(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// GLOW ORB BACKGROUND — Decorative animated background
+// GLOW ORB BACKGROUND — Decorative animated background (GNITS warm tones)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @Composable
@@ -556,19 +560,19 @@ fun GlowOrbBackground(
     content: @Composable BoxScope.() -> Unit
 ) {
     Box(modifier = modifier) {
-        // Decorative orbs
+        // Decorative orbs — GNITS warm orange tones
         Box(
             modifier = Modifier
                 .size(300.dp)
                 .offset(x = (-100).dp, y = (-100).dp)
-                .background(AntigravityBlue.copy(alpha = 0.15f), CircleShape)
+                .background(GnitsOrangeGlow.copy(alpha = 0.15f), CircleShape)
         )
         Box(
             modifier = Modifier
                 .size(250.dp)
                 .align(Alignment.BottomEnd)
                 .offset(x = 100.dp, y = 100.dp)
-                .background(CyanPulse.copy(alpha = 0.1f), CircleShape)
+                .background(WarmPulse.copy(alpha = 0.1f), CircleShape)
         )
         
         content()
@@ -576,7 +580,7 @@ fun GlowOrbBackground(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// GRADIENT BUTTON — High-action button with gradient
+// GRADIENT BUTTON — High-action button with GNITS Orange gradient
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @Composable
@@ -593,8 +597,8 @@ fun GradientButton(
             .height(56.dp)
             .background(
                 Brush.linearGradient(
-                    colors = if (enabled) listOf(AntigravityBlue, CyanPulse)
-                    else listOf(AntigravityBlue.copy(alpha = 0.4f), CyanPulse.copy(alpha = 0.4f))
+                    colors = if (enabled) listOf(GnitsOrange, WarmPulse)
+                    else listOf(GnitsOrange.copy(alpha = 0.4f), WarmPulse.copy(alpha = 0.4f))
                 ),
                 RoundedCornerShape(28.dp)
             ),

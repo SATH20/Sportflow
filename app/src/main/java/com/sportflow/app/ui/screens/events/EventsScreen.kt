@@ -1,7 +1,6 @@
 package com.sportflow.app.ui.screens.events
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -23,7 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -39,7 +37,7 @@ fun EventsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     var selectedFilter by remember { mutableStateOf("All") }
-    val filters = listOf("All", "Football", "Cricket", "Basketball", "Badminton")
+    val filters = listOf("All", "Football", "Cricket", "Basketball", "Badminton", "Volleyball")
 
     LazyColumn(
         modifier = Modifier
@@ -62,7 +60,7 @@ fun EventsScreen(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Find your next game",
+                    text = "GNITS Inter-Department Sports",
                     style = SportFlowTheme.typography.bodyMedium,
                     color = TextSecondary
                 )
@@ -94,13 +92,13 @@ fun EventsScreen(
                         shape = RoundedCornerShape(20.dp),
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = OffWhite,
-                            selectedContainerColor = PlayoGreenLight,
+                            selectedContainerColor = GnitsOrangeLight,
                             labelColor = TextSecondary,
-                            selectedLabelColor = PlayoGreenDark
+                            selectedLabelColor = GnitsOrangeDark
                         ),
                         border = FilterChipDefaults.filterChipBorder(
                             borderColor = CardBorder,
-                            selectedBorderColor = PlayoGreen,
+                            selectedBorderColor = GnitsOrange,
                             enabled = true,
                             selected = isSelected
                         )
@@ -108,6 +106,18 @@ fun EventsScreen(
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // Loading
+        if (uiState.isLoading) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = GnitsOrange)
+                }
+            }
         }
 
         // Tournaments Section
@@ -129,17 +139,44 @@ fun EventsScreen(
         }
 
         // Upcoming Events Section
-        item {
-            SectionHeader(title = "Upcoming Events")
+        if (uiState.upcomingMatches.isNotEmpty()) {
+            item {
+                SectionHeader(title = "Upcoming Events")
+            }
+
+            items(uiState.upcomingMatches.filter {
+                selectedFilter == "All" || it.sportType.equals(selectedFilter, ignoreCase = true)
+            }) { match ->
+                UpcomingEventCard(
+                    match = match,
+                    onClick = { }
+                )
+            }
         }
 
-        items(uiState.upcomingMatches.filter {
-            selectedFilter == "All" || it.sportType.equals(selectedFilter, ignoreCase = true)
-        }) { match ->
-            UpcomingEventCard(
-                match = match,
-                onClick = { }
-            )
+        // Empty State
+        if (!uiState.isLoading && uiState.tournaments.isEmpty() && uiState.upcomingMatches.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Outlined.EventBusy,
+                            contentDescription = null,
+                            tint = TextTertiary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No events scheduled",
+                            style = SportFlowTheme.typography.headlineMedium,
+                            color = TextSecondary
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -159,7 +196,7 @@ private fun TournamentEventCard(
             .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
     ) {
-        // Background gradient
+        // Background gradient — GNITS warm tones per sport
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -169,7 +206,7 @@ private fun TournamentEventCard(
                             "football" -> listOf(Color(0xFF1E3A5F), Color(0xFF0F172A))
                             "cricket" -> listOf(Color(0xFF7C3AED), Color(0xFF4C1D95))
                             "basketball" -> listOf(Color(0xFFEA580C), Color(0xFF9A3412))
-                            else -> listOf(PlayoGreenDark, Color(0xFF064E3B))
+                            else -> listOf(GnitsOrangeDark, Color(0xFF8B5E0C))
                         }
                     )
                 )
@@ -210,7 +247,7 @@ private fun TournamentEventCard(
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = when (tournament.status) {
-                        TournamentStatus.IN_PROGRESS -> PlayoGreen.copy(alpha = 0.9f)
+                        TournamentStatus.IN_PROGRESS -> GnitsOrange.copy(alpha = 0.9f)
                         TournamentStatus.REGISTRATION -> WarningAmber.copy(alpha = 0.9f)
                         else -> TextTertiary.copy(alpha = 0.6f)
                     }
@@ -247,7 +284,7 @@ private fun TournamentEventCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = tournament.prizePool,
+                            text = tournament.prizePool.ifEmpty { "GNITS Inter-Dept" },
                             style = SportFlowTheme.typography.labelMedium,
                             color = Color.White.copy(alpha = 0.9f),
                             fontWeight = FontWeight.Bold
@@ -296,7 +333,7 @@ private fun UpcomingEventCard(
             Box(
                 modifier = Modifier
                     .size(52.dp)
-                    .background(PlayoGreenLight, RoundedCornerShape(16.dp)),
+                    .background(GnitsOrangeLight, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -308,7 +345,7 @@ private fun UpcomingEventCard(
                         else -> Icons.Filled.Sports
                     },
                     contentDescription = null,
-                    tint = PlayoGreenDark,
+                    tint = GnitsOrangeDark,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -343,14 +380,21 @@ private fun UpcomingEventCard(
             }
 
             Column(horizontalAlignment = Alignment.End) {
-                SkillTag(level = listOf("Beginner", "Intermediate").random())
+                if (match.teamADepartment.isNotBlank()) {
+                    StatusChip(
+                        text = match.teamADepartment,
+                        color = GnitsOrange
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = match.tournamentName,
-                    style = SportFlowTheme.typography.labelSmall,
-                    color = InfoBlue,
-                    fontWeight = FontWeight.SemiBold
-                )
+                if (match.tournamentName.isNotBlank()) {
+                    Text(
+                        text = match.tournamentName,
+                        style = SportFlowTheme.typography.labelSmall,
+                        color = InfoBlue,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }

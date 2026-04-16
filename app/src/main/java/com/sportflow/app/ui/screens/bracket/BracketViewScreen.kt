@@ -106,13 +106,13 @@ fun BracketViewScreen(
                         shape = RoundedCornerShape(20.dp),
                         colors = FilterChipDefaults.filterChipColors(
                             containerColor = OffWhite,
-                            selectedContainerColor = PlayoGreenLight,
+                            selectedContainerColor = GnitsOrangeLight,
                             labelColor = TextSecondary,
-                            selectedLabelColor = PlayoGreenDark
+                            selectedLabelColor = GnitsOrangeDark
                         ),
                         border = FilterChipDefaults.filterChipBorder(
                             borderColor = CardBorder,
-                            selectedBorderColor = PlayoGreen,
+                            selectedBorderColor = GnitsOrange,
                             enabled = true,
                             selected = isSelected
                         )
@@ -121,62 +121,72 @@ fun BracketViewScreen(
             }
         }
 
-        // Zoom Controls
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Pinch to zoom",
-                style = SportFlowTheme.typography.bodySmall,
-                color = TextTertiary,
-                modifier = Modifier.weight(1f)
-            )
-            IconButton(
-                onClick = { scale = (scale + 0.2f).coerceAtMost(3f) },
-                modifier = Modifier.size(36.dp)
+        // Loading
+        if (uiState.isLoading) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Filled.ZoomIn, "Zoom In", tint = TextSecondary)
+                CircularProgressIndicator(color = GnitsOrange)
             }
-            IconButton(
-                onClick = { scale = (scale - 0.2f).coerceAtLeast(0.5f) },
-                modifier = Modifier.size(36.dp)
+        } else {
+            // Zoom Controls
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Filled.ZoomOut, "Zoom Out", tint = TextSecondary)
-            }
-            IconButton(
-                onClick = { scale = 1f; offsetX = 0f; offsetY = 0f },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(Icons.Filled.FitScreen, "Reset", tint = TextSecondary)
-            }
-        }
-
-        // Bracket Tree
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(0.5f, 3f)
-                        offsetX += pan.x
-                        offsetY += pan.y
-                    }
-                }
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offsetX,
-                    translationY = offsetY
+                Text(
+                    text = "Pinch to zoom",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextTertiary,
+                    modifier = Modifier.weight(1f)
                 )
-        ) {
-            if (uiState.bracketNodes.isNotEmpty()) {
-                BracketTree(nodes = uiState.bracketNodes)
-            } else {
-                EmptyBracketState()
+                IconButton(
+                    onClick = { scale = (scale + 0.2f).coerceAtMost(3f) },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Filled.ZoomIn, "Zoom In", tint = TextSecondary)
+                }
+                IconButton(
+                    onClick = { scale = (scale - 0.2f).coerceAtLeast(0.5f) },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Filled.ZoomOut, "Zoom Out", tint = TextSecondary)
+                }
+                IconButton(
+                    onClick = { scale = 1f; offsetX = 0f; offsetY = 0f },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Filled.FitScreen, "Reset", tint = TextSecondary)
+                }
+            }
+
+            // Bracket Tree
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(0.5f, 3f)
+                            offsetX += pan.x
+                            offsetY += pan.y
+                        }
+                    }
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offsetX,
+                        translationY = offsetY
+                    )
+            ) {
+                if (uiState.bracketNodes.isNotEmpty()) {
+                    BracketTree(nodes = uiState.bracketNodes)
+                } else {
+                    EmptyBracketState()
+                }
             }
         }
     }
@@ -208,10 +218,10 @@ private fun BracketTree(nodes: List<BracketNode>) {
                 // Round label
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (round == rounds.keys.max()) PlayoGreenLight else OffWhite,
+                    color = if (round == rounds.keys.max()) GnitsOrangeLight else OffWhite,
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp,
-                        if (round == rounds.keys.max()) PlayoGreen.copy(alpha = 0.5f) else CardBorder
+                        if (round == rounds.keys.max()) GnitsOrange.copy(alpha = 0.5f) else CardBorder
                     )
                 ) {
                     Text(
@@ -219,7 +229,7 @@ private fun BracketTree(nodes: List<BracketNode>) {
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         style = SportFlowTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (round == rounds.keys.max()) PlayoGreenDark else TextSecondary
+                        color = if (round == rounds.keys.max()) GnitsOrangeDark else TextSecondary
                     )
                 }
 
@@ -278,8 +288,8 @@ private fun BracketMatchNode(
     isFinal: Boolean
 ) {
     val borderColor = when {
-        isFinal -> PlayoGreen
-        node.winner != null -> PlayoGreen.copy(alpha = 0.5f)
+        isFinal -> GnitsOrange
+        node.winner != null -> GnitsOrange.copy(alpha = 0.5f)
         else -> CardBorder
     }
 
@@ -302,14 +312,14 @@ private fun BracketMatchNode(
                     Icon(
                         Icons.Filled.EmojiEvents,
                         contentDescription = null,
-                        tint = PlayoGreen,
+                        tint = GnitsOrange,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "FINAL",
                         style = SportFlowTheme.typography.labelSmall,
-                        color = PlayoGreen,
+                        color = GnitsOrange,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -368,7 +378,7 @@ private fun BracketTeamRow(
                 style = SportFlowTheme.typography.labelMedium,
                 color = when {
                     isTBD -> TextTertiary
-                    isWinner -> PlayoGreenDark
+                    isWinner -> GnitsOrangeDark
                     else -> TextPrimary
                 },
                 fontWeight = if (isWinner) FontWeight.Bold else FontWeight.Normal,
@@ -380,7 +390,7 @@ private fun BracketTeamRow(
             Text(
                 text = "$score",
                 style = SportFlowTheme.typography.headlineSmall,
-                color = if (isWinner) PlayoGreenDark else TextTertiary,
+                color = if (isWinner) GnitsOrangeDark else TextTertiary,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -405,13 +415,13 @@ private fun EmptyBracketState() {
                 Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .background(PlayoGreenLight, RoundedCornerShape(20.dp)),
+                        .background(GnitsOrangeLight, RoundedCornerShape(20.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         Icons.Filled.AccountTree,
                         contentDescription = null,
-                        tint = PlayoGreen,
+                        tint = GnitsOrange,
                         modifier = Modifier.size(32.dp)
                     )
                 }

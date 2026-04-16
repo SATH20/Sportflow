@@ -1,7 +1,6 @@
 package com.sportflow.app.ui.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -12,10 +11,10 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
 private val SportFlowLightColorScheme = lightColorScheme(
-    primary = PlayoGreen,
+    primary = GnitsOrange,
     onPrimary = Color.White,
-    primaryContainer = PlayoGreenLight,
-    onPrimaryContainer = PlayoGreenDark,
+    primaryContainer = GnitsOrangeLight,
+    onPrimaryContainer = GnitsOrangeDark,
     secondary = InfoBlue,
     onSecondary = Color.White,
     secondaryContainer = InfoBlueLight,
