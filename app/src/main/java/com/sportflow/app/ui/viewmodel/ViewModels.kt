@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.Timestamp
 import com.sportflow.app.data.model.*
 import com.sportflow.app.data.repository.SportFlowRepository
+import com.sportflow.app.data.service.FixtureGenerator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -587,6 +588,206 @@ class AdminViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(isGeneratingBracket = false, error = e.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Generates a complete single-elimination fixture list using [FixtureGenerator]
+     * for a given tournament and persists all match documents to Firestore.
+     *
+     * @param tournamentId   Target tournament document ID
+     * @param teams          Ordered or pre-seeded team list (will be shuffled internally)
+     * @param matchType      Sport name, e.g. "Cricket"
+     * @param venueName      GNITS venue display name
+     * @param eligibilityText Department restriction, e.g. "IT students only"
+     */
+    fun generateFixtures(
+        tournamentId: String,
+        tournamentName: String,
+        teams: List<String>,
+        matchType: String,
+        venueName: String = GnitsVenue.INDOOR_SPORTS_ROOM.displayName,
+        eligibilityText: String = "All GNITS students"
+    ) {
+        if (teams.size < 2) {
+            _uiState.update { it.copy(error = "Need at least 2 teams to generate fixtures") }
+            return
+        }
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGeneratingBracket = true) }
+            try {
+                val generator = FixtureGenerator()
+                val fixtures  = generator.generateSingleElimination(
+                    teams          = teams,
+                    matchType      = matchType,
+                    startTime      = Timestamp.now(),
+                    tournamentId   = tournamentId,
+                    tournamentName = tournamentName,
+                    venueName      = venueName,
+                    eligibilityText = eligibilityText
+                )
+                // Persist each fixture document
+                fixtures.forEach { match -> repository.createMatch(match) }
+                _uiState.update {
+                    it.copy(
+                        isGeneratingBracket = false,
+                        successMessage = "⚽ ${fixtures.size} fixtures generated for $tournamentName!"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isGeneratingBracket = false, error = e.message)
+                }
+            }
+        }
+    }
+
+    fun clearMessage() {
+        _uiState.update { it.copy(successMessage = null, error = null) }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MY MATCHES VIEWMODEL — Player’s registered events, filtered by their UID
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+data class MyMatchesUiState(
+    val myMatches: List<Match> = emptyList(),
+    val isLoading: Boolean = true,
+    val error: String? = null,
+    val emptyMessage: String = "You haven't registered for any events yet"
+)
+
+@HiltViewModel
+class MyMatchesViewModel @Inject constructor(
+    private val repository: SportFlowRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(MyMatchesUiState())
+    val uiState: StateFlow<MyMatchesUiState> = _uiState.asStateFlow()
+
+    init {
+        loadMyMatches()
+    }
+
+    private fun loadMyMatches() {
+        viewModelScope.launch {
+            try {
+                repository.getMyRegisteredMatches().collect { matches ->
+                    _uiState.update {
+                        it.copy(
+                            myMatches  = matches,
+                            isLoading  = false,
+                            emptyMessage = if (repository.getCurrentUser() == null)
+                                "Sign in to see your registered events"
+                            else
+                                "You haven't registered for any events yet"
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = e.message) }
+            }
+        }
+    }
+
+    fun refresh() {
+        _uiState.update { it.copy(isLoading = true, error = null) }
+        loadMyMatches()
+    }
+
+    fun clearError() {
+        _uiState.update { it.copy(error = null) }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// REGISTRATION VIEWMODEL — Register / Cancel with status-aware per-card state
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+data class RegistrationUiState(
+    /** matchId → whether user is registered */
+    val registeredMatchIds: Set<String> = emptySet(),
+    /** matchId → actively processing (button loading) */
+    val loadingMatchIds: Set<String> = emptySet(),
+    val successMessage: String? = null,
+    val error: String? = null
+)
+
+@HiltViewModel
+class RegistrationViewModel @Inject constructor(
+    private val repository: SportFlowRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(RegistrationUiState())
+    val uiState: StateFlow<RegistrationUiState> = _uiState.asStateFlow()
+
+    /**
+     * Check and cache whether the current user is already registered for [matchId].
+     * Call once per visible card (e.g. in LaunchedEffect).
+     */
+    fun checkRegistration(matchId: String) {
+        viewModelScope.launch {
+            try {
+                val reg = repository.getRegistrationStatus(matchId)
+                if (reg != null) {
+                    _uiState.update { it.copy(registeredMatchIds = it.registeredMatchIds + matchId) }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
+     * Perform a transactional registration write.
+     * Optimistically updates loading state, then refreshes registration status.
+     */
+    fun register(match: Match) {
+        val matchId = match.id
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingMatchIds = it.loadingMatchIds + matchId, error = null) }
+            try {
+                repository.registerForMatch(match)
+                _uiState.update {
+                    it.copy(
+                        registeredMatchIds = it.registeredMatchIds + matchId,
+                        loadingMatchIds    = it.loadingMatchIds - matchId,
+                        successMessage     = "🎫 Registered for ${match.teamA} vs ${match.teamB}!"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        loadingMatchIds = it.loadingMatchIds - matchId,
+                        error = e.message ?: "Registration failed"
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Cancel an existing registration.
+     */
+    fun cancelRegistration(matchId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingMatchIds = it.loadingMatchIds + matchId, error = null) }
+            try {
+                repository.cancelRegistration(matchId)
+                _uiState.update {
+                    it.copy(
+                        registeredMatchIds = it.registeredMatchIds - matchId,
+                        loadingMatchIds    = it.loadingMatchIds - matchId,
+                        successMessage     = "Registration cancelled"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        loadingMatchIds = it.loadingMatchIds - matchId,
+                        error = e.message ?: "Failed to cancel registration"
+                    )
                 }
             }
         }

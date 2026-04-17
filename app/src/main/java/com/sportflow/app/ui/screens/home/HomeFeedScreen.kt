@@ -31,233 +31,255 @@ import com.sportflow.app.data.model.*
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.HomeViewModel
+import com.sportflow.app.ui.viewmodel.RegistrationViewModel
+
+// ── Home Feed Screen ──────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeFeedScreen(
     navController: NavHostController,
     isAdmin: Boolean = false,
-    viewModel: HomeViewModel = hiltViewModel()
+    viewModel: HomeViewModel = hiltViewModel(),
+    regViewModel: RegistrationViewModel = hiltViewModel()
 ) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val uiState  by viewModel.uiState.collectAsStateWithLifecycle()
+    val regState by regViewModel.uiState.collectAsStateWithLifecycle()
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ScreenBg),
-        contentPadding = PaddingValues(bottom = 24.dp)
-    ) {
-        // ── Search Bar + GNITS Greeting ──────────────────────────────────
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(PureWhite)
-                    .padding(horizontal = 20.dp, vertical = 16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+    // Unified feed: open-registration tournaments first, then scheduled matches
+    val unifiedFeed: List<Any> = remember(uiState.upcomingMatches, uiState.tournaments) {
+        buildList {
+            uiState.tournaments
+                .filter { it.status == TournamentStatus.REGISTRATION }
+                .forEach { add(it) }
+            uiState.upcomingMatches.forEach { add(it) }
+        }
+    }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(regState.successMessage, regState.error) {
+        val msg = regState.successMessage ?: regState.error
+        if (msg != null) {
+            snackbarHostState.showSnackbar(msg)
+            regViewModel.clearMessage()
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        containerColor = ScreenBg
+    ) { innerPadding ->
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(bottom = 24.dp)
+        ) {
+
+            // ── Header ───────────────────────────────────────────────────
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(PureWhite)
+                        .padding(horizontal = 20.dp, vertical = 16.dp)
                 ) {
-                    Column {
-                        Text(
-                            text = "Welcome to GNITS! 🏆",
-                            style = SportFlowTheme.typography.bodyMedium,
-                            color = TextSecondary
-                        )
-                        Text(
-                            text = "GNITS Sports",
-                            style = SportFlowTheme.typography.displayLarge,
-                            color = TextPrimary
-                        )
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Admin shortcut — only visible for admin role
-                        if (isAdmin) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "Welcome to GNITS! 🏆",
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = "GNITS Sports",
+                                style = SportFlowTheme.typography.displayLarge,
+                                color = TextPrimary
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (isAdmin) {
+                                IconButton(
+                                    onClick = { navController.navigate("admin") },
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .background(GnitsOrangeLight, CircleShape)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.AdminPanelSettings,
+                                        contentDescription = "Admin Portal",
+                                        tint = GnitsOrange
+                                    )
+                                }
+                            }
                             IconButton(
-                                onClick = { navController.navigate("admin") },
+                                onClick = { },
                                 modifier = Modifier
                                     .size(44.dp)
-                                    .background(GnitsOrangeLight, CircleShape)
+                                    .background(OffWhite, CircleShape)
                             ) {
                                 Icon(
-                                    Icons.Filled.AdminPanelSettings,
-                                    contentDescription = "Admin Portal",
-                                    tint = GnitsOrange
+                                    Icons.Outlined.Notifications,
+                                    contentDescription = "Notifications",
+                                    tint = TextSecondary
                                 )
                             }
                         }
-                        IconButton(
-                            onClick = { },
-                            modifier = Modifier
-                                .size(44.dp)
-                                .background(OffWhite, CircleShape)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = OffWhite,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                Icons.Outlined.Notifications,
-                                contentDescription = "Notifications",
-                                tint = TextSecondary
+                                Icons.Outlined.Search,
+                                contentDescription = null,
+                                tint = TextTertiary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text(
+                                text = "Search GNITS tournaments, events...",
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextTertiary
                             )
                         }
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            // ── Loading ──────────────────────────────────────────────────
+            if (uiState.isLoading) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(48.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator(color = GnitsOrange) }
+                }
+            }
 
-                // Search
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    color = OffWhite,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+            // ── Live Now ─────────────────────────────────────────────────
+            if (uiState.liveMatches.isNotEmpty()) {
+                item {
+                    SectionHeader(
+                        title = "Live Now 🔴",
+                        actionText = "View All",
+                        onAction = { navController.navigate("live") }
+                    )
+                }
+                item {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Icon(
-                            Icons.Outlined.Search,
-                            contentDescription = null,
-                            tint = TextTertiary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = "Search GNITS tournaments, events...",
-                            style = SportFlowTheme.typography.bodyMedium,
-                            color = TextTertiary
-                        )
+                        items(uiState.liveMatches) { match ->
+                            LiveMatchBanner(
+                                match = match,
+                                onClick = { navController.navigate("live") }
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        // ── Loading State ────────────────────────────────────────────────
-        if (uiState.isLoading) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(48.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator(color = GnitsOrange)
+            // ── Featured Tournament Hero ──────────────────────────────────
+            if (uiState.tournaments.isNotEmpty()) {
+                item { SectionHeader(title = "Featured Tournament") }
+                item {
+                    TopTournamentHero(
+                        tournament = uiState.tournaments.first(),
+                        onClick = {
+                            navController.navigate(
+                                "bracket?tournamentId=${uiState.tournaments.first().id}"
+                            )
+                        }
+                    )
                 }
             }
-        }
 
-        // ── Live Now Banner ──────────────────────────────────────────────
-        if (uiState.liveMatches.isNotEmpty()) {
-            item {
-                SectionHeader(
-                    title = "Live Now",
-                    actionText = "View All",
-                    onAction = { navController.navigate("live") }
-                )
-            }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(uiState.liveMatches) { match ->
-                        LiveMatchBanner(
-                            match = match,
-                            onClick = { navController.navigate("live") }
-                        )
-                    }
+            // ── Unified Feed: Matches + Open Tournaments ──────────────────
+            if (unifiedFeed.isNotEmpty()) {
+                item {
+                    SectionHeader(
+                        title = "Events & Tournaments",
+                        actionText = "See All",
+                        onAction = { navController.navigate("events") }
+                    )
                 }
-            }
-        }
 
-        // ── Top Tournament Hero ──────────────────────────────────────────
-        if (uiState.tournaments.isNotEmpty()) {
-            item {
-                SectionHeader(title = "Featured Tournament")
-            }
-            item {
-                TopTournamentHero(
-                    tournament = uiState.tournaments.first(),
-                    onClick = {
-                        navController.navigate("bracket?tournamentId=${uiState.tournaments.first().id}")
-                    }
-                )
-            }
-        }
-
-        // ── Upcoming Events ─────────────────────────────────────────────
-        if (uiState.upcomingMatches.isNotEmpty()) {
-            item {
-                SectionHeader(
-                    title = "Upcoming Matches",
-                    actionText = "See All",
-                    onAction = { navController.navigate("events") }
-                )
-            }
-
-            items(uiState.upcomingMatches) { match ->
-                EventFeedCard(
-                    match = match,
-                    onClick = { }
-                )
-            }
-        }
-
-        // ── Empty State ─────────────────────────────────────────────────
-        if (!uiState.isLoading && uiState.liveMatches.isEmpty() && uiState.upcomingMatches.isEmpty() && uiState.tournaments.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(48.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Outlined.SportsScore,
-                            contentDescription = null,
-                            tint = TextTertiary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "No events yet",
-                            style = SportFlowTheme.typography.headlineMedium,
-                            color = TextSecondary
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Ask your Department Sports Coordinator to create matches",
-                            style = SportFlowTheme.typography.bodyMedium,
-                            color = TextTertiary
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── Active Tournaments ───────────────────────────────────────────
-        if (uiState.tournaments.size > 1) {
-            item {
-                SectionHeader(
-                    title = "All Tournaments",
-                    actionText = "View All",
-                    onAction = { navController.navigate("events") }
-                )
-            }
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(uiState.tournaments) { tournament ->
-                        TournamentCompactCard(
-                            tournament = tournament,
-                            onClick = {
-                                navController.navigate("bracket?tournamentId=${tournament.id}")
+                items(unifiedFeed) { feedItem ->
+                    when (feedItem) {
+                        is Match -> {
+                            val isRegistered = feedItem.id in regState.registeredMatchIds
+                            val isLoading    = feedItem.id in regState.loadingMatchIds
+                            LaunchedEffect(feedItem.id) {
+                                regViewModel.checkRegistration(feedItem.id)
                             }
-                        )
+                            EventFeedCard(
+                                match         = feedItem,
+                                isRegistered  = isRegistered,
+                                isRegistering = isLoading,
+                                onRegister    = {
+                                    if (isRegistered) regViewModel.cancelRegistration(feedItem.id)
+                                    else regViewModel.register(feedItem)
+                                },
+                                onClick = { }
+                            )
+                        }
+                        is Tournament -> {
+                            TournamentFeedCard(
+                                tournament = feedItem,
+                                onClick = {
+                                    navController.navigate("bracket?tournamentId=${feedItem.id}")
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ── Empty State ───────────────────────────────────────────────
+            if (!uiState.isLoading && uiState.liveMatches.isEmpty() &&
+                uiState.upcomingMatches.isEmpty() && uiState.tournaments.isEmpty()
+            ) {
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(48.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                Icons.Outlined.SportsScore,
+                                contentDescription = null,
+                                tint = TextTertiary,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "No events yet",
+                                style = SportFlowTheme.typography.headlineMedium,
+                                color = TextSecondary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Ask your Department Sports Coordinator to create matches",
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextTertiary
+                            )
+                        }
                     }
                 }
             }
@@ -265,7 +287,7 @@ fun HomeFeedScreen(
     }
 }
 
-// ── Live Match Banner ────────────────────────────────────────────────────────
+// ── Live Match Banner ─────────────────────────────────────────────────────────
 
 @Composable
 private fun LiveMatchBanner(
@@ -288,7 +310,6 @@ private fun LiveMatchBanner(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Teams & Score
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -309,7 +330,6 @@ private fun LiveMatchBanner(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(1f)
@@ -327,7 +347,6 @@ private fun LiveMatchBanner(
                         color = TextTertiary
                     )
                 }
-
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.weight(1f)
@@ -375,7 +394,7 @@ private fun LiveMatchBanner(
     }
 }
 
-// ── Top Tournament Hero Card ─────────────────────────────────────────────────
+// ── Featured Tournament Hero Card ─────────────────────────────────────────────
 
 @Composable
 private fun TopTournamentHero(
@@ -390,42 +409,28 @@ private fun TopTournamentHero(
             .clip(RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
     ) {
-        // GNITS Orange gradient background
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.linearGradient(
-                        colors = listOf(
-                            GnitsOrange,
-                            GnitsOrangeDark,
-                            Color(0xFF8B5E0C)
-                        )
+                        colors = listOf(GnitsOrange, GnitsOrangeDark, Color(0xFF8B5E0C))
                     )
                 )
         )
-
-        // Decorative circles
         Box(
             modifier = Modifier
                 .size(200.dp)
                 .offset(x = 220.dp, y = (-40).dp)
-                .background(
-                    Color.White.copy(alpha = 0.08f),
-                    CircleShape
-                )
+                .background(Color.White.copy(alpha = 0.08f), CircleShape)
         )
         Box(
             modifier = Modifier
                 .size(120.dp)
                 .offset(x = 280.dp, y = 100.dp)
-                .background(
-                    Color.White.copy(alpha = 0.05f),
-                    CircleShape
-                )
+                .background(Color.White.copy(alpha = 0.05f), CircleShape)
         )
 
-        // Content overlay
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -474,20 +479,18 @@ private fun TopTournamentHero(
                         style = SportFlowTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.8f)
                     )
+                    Text("•", color = Color.White.copy(alpha = 0.5f))
+                    // Eligibility text in hero
                     Text(
-                        text = "•",
-                        color = Color.White.copy(alpha = 0.5f)
-                    )
-                    Text(
-                        text = tournament.prizePool.ifEmpty { "GNITS Inter-Dept" },
+                        text = if (tournament.eligibilityText.isNotBlank())
+                            tournament.eligibilityText
+                        else
+                            tournament.prizePool.ifEmpty { "GNITS Inter-Dept" },
                         style = SportFlowTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.9f),
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
-                        text = "•",
-                        color = Color.White.copy(alpha = 0.5f)
-                    )
+                    Text("•", color = Color.White.copy(alpha = 0.5f))
                     Text(
                         text = "${tournament.maxTeams} teams",
                         style = SportFlowTheme.typography.bodyMedium,
@@ -499,11 +502,14 @@ private fun TopTournamentHero(
     }
 }
 
-// ── Event Feed Card ──────────────────────────────────────────────────────────
+// ── Event Feed Card — Upcoming Match with Eligibility + Register button ────────
 
 @Composable
 private fun EventFeedCard(
     match: Match,
+    isRegistered: Boolean = false,
+    isRegistering: Boolean = false,
+    onRegister: () -> Unit = {},
     onClick: () -> Unit
 ) {
     SportCard(
@@ -537,6 +543,7 @@ private fun EventFeedCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Venue + tournament
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -550,7 +557,7 @@ private fun EventFeedCard(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = match.venue,
+                        text = match.venue.ifEmpty { "GNITS Campus" },
                         style = SportFlowTheme.typography.bodySmall,
                         color = TextTertiary
                     )
@@ -566,23 +573,201 @@ private fun EventFeedCard(
                 }
             }
 
+            // GNITS Eligibility badge
+            if (match.eligibilityText.isNotBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Outlined.VerifiedUser,
+                        contentDescription = "Eligibility",
+                        tint = SuccessGreen,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = match.eligibilityText,
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = SuccessGreen,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(14.dp))
 
-            StatusChip(
-                text = match.status.name,
-                color = when (match.status) {
-                    MatchStatus.SCHEDULED -> InfoBlue
-                    MatchStatus.LIVE -> LiveRed
-                    MatchStatus.HALFTIME -> WarningAmber
-                    MatchStatus.COMPLETED -> SuccessGreen
-                    MatchStatus.CANCELLED -> ErrorRed
+            // Bottom row: status chip + register button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                StatusChip(
+                    text = match.status.name,
+                    color = when (match.status) {
+                        MatchStatus.SCHEDULED -> InfoBlue
+                        MatchStatus.LIVE      -> LiveRed
+                        MatchStatus.HALFTIME  -> WarningAmber
+                        MatchStatus.COMPLETED -> SuccessGreen
+                        MatchStatus.CANCELLED -> ErrorRed
+                    }
+                )
+
+                // Register button — only for SCHEDULED events
+                if (match.status == MatchStatus.SCHEDULED) {
+                    when {
+                        isRegistering -> CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = GnitsOrange,
+                            strokeWidth = 2.dp
+                        )
+                        isRegistered -> OutlinedButton(
+                            onClick = onRegister,
+                            shape = RoundedCornerShape(12.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                tint = SuccessGreen,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Registered",
+                                style = SportFlowTheme.typography.labelMedium,
+                                color = SuccessGreen,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        else -> Button(
+                            onClick = onRegister,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = GnitsOrange),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.HowToReg,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Register",
+                                style = SportFlowTheme.typography.labelMedium,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
-            )
+            }
         }
     }
 }
 
-// ── Tournament Compact Card ──────────────────────────────────────────────────
+// ── Tournament Feed Card (in unified feed) ─────────────────────────────────────
+
+@Composable
+private fun TournamentFeedCard(
+    tournament: Tournament,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(140.dp)
+                .background(
+                    Brush.linearGradient(colors = listOf(GnitsOrange, GnitsOrangeDark))
+                )
+        )
+        Box(
+            modifier = Modifier
+                .size(120.dp)
+                .offset(x = 270.dp, y = (-20).dp)
+                .background(Color.White.copy(alpha = 0.07f), CircleShape)
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.White.copy(alpha = 0.15f)
+                ) {
+                    Text(
+                        text = "🏆 REGISTRATION OPEN",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = SportFlowTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                Icon(
+                    Icons.Filled.ChevronRight,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Text(
+                text = tournament.name,
+                style = SportFlowTheme.typography.headlineLarge,
+                color = Color.White,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = tournament.sport,
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.85f)
+                )
+                Text("•", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
+                Text(
+                    text = if (tournament.eligibilityText.isNotBlank())
+                        tournament.eligibilityText
+                    else
+                        "All GNITS students",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Text("•", color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp)
+                Text(
+                    text = "${tournament.teams.size}/${tournament.maxTeams}",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.85f)
+                )
+            }
+        }
+    }
+}
+
+// ── Tournament Compact Card (kept for backward compat) ────────────────────────
 
 @Composable
 private fun TournamentCompactCard(
@@ -603,9 +788,9 @@ private fun TournamentCompactCard(
                     text = tournament.status.name.replace("_", " "),
                     color = when (tournament.status) {
                         TournamentStatus.REGISTRATION -> WarningAmber
-                        TournamentStatus.IN_PROGRESS -> GnitsOrange
-                        TournamentStatus.COMPLETED -> TextTertiary
-                        TournamentStatus.CANCELLED -> ErrorRed
+                        TournamentStatus.IN_PROGRESS  -> GnitsOrange
+                        TournamentStatus.COMPLETED    -> TextTertiary
+                        TournamentStatus.CANCELLED    -> ErrorRed
                     }
                 )
                 Icon(
@@ -617,7 +802,6 @@ private fun TournamentCompactCard(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-
             Text(
                 text = tournament.name,
                 style = SportFlowTheme.typography.headlineMedium,

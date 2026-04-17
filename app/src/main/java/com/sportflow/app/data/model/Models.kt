@@ -24,10 +24,10 @@ enum class GnitsDepartment(val displayName: String) {
 
 /** Actual GNITS campus venues */
 enum class GnitsVenue(val displayName: String) {
-    MAIN_GROUND("Main Ground"),
-    BADMINTON_STADIUM("Badminton Stadium"),
-    BASKETBALL_COURT("Basketball Court"),
-    INDOOR_SPORTS_ROOM("Indoor Sports Room");
+    MAIN_GROUND("GNITS Main Ground"),
+    BADMINTON_STADIUM("GNITS Badminton Stadium"),
+    BASKETBALL_COURT("GNITS Basketball Court"),
+    INDOOR_SPORTS_ROOM("GNITS Indoor Stadium");
 
     companion object {
         val allNames: List<String> get() = entries.map { it.displayName }
@@ -112,7 +112,17 @@ data class Match(
     val round: String = "",
     val highlights: List<String> = emptyList(),
     val winnerId: String = "",
-    val createdBy: String = ""
+    val createdBy: String = "",
+
+    // ── Registration & Feed Metadata ──────────────────────────────────
+    /** Human-readable eligibility rule, e.g. "IT students only" or "All departments" */
+    val eligibilityText: String = "All GNITS students",
+    /** Maximum registrations allowed for this match/event (0 = unlimited) */
+    val maxRegistrations: Int = 0,
+    /** Total registered count (denormalized from registrations sub-collection) */
+    val registrationCount: Int = 0,
+    /** Next match ID in the bracket — set by FixtureGenerator */
+    val nextMatchId: String = ""
 )
 
 // ── Sport Rules Engine ───────────────────────────────────────────────────────
@@ -326,7 +336,13 @@ data class Tournament(
     val entryFee: Double = 0.0,
     val prizePool: String = "",
     val maxTeams: Int = 16,
-    val venue: String = ""
+    val venue: String = "",
+    /** Human-readable eligibility text for the tournament */
+    val eligibilityText: String = "All GNITS students",
+    /** Maximum teams per department (0 = no restriction) */
+    val deptQuota: Int = 0,
+    /** Allowed departments list (empty = all) */
+    val allowedDepartments: List<String> = emptyList()
 )
 
 enum class TournamentStatus { REGISTRATION, IN_PROGRESS, COMPLETED, CANCELLED }
@@ -355,6 +371,22 @@ data class Payment(
 )
 
 enum class PaymentStatus { PENDING, VERIFIED, REJECTED }
+
+// ── Registration Model — stored in gnits_matches/{matchId}/registrations ───────
+
+enum class RegistrationStatus { PENDING, CONFIRMED, CANCELLED }
+
+data class Registration(
+    val id: String = "",
+    val uid: String = "",
+    val matchId: String = "",
+    val tournamentId: String = "",
+    val userName: String = "",
+    val department: String = "",
+    val rollNumber: String = "",
+    val status: RegistrationStatus = RegistrationStatus.CONFIRMED,
+    val registeredAt: Timestamp? = null
+)
 
 data class SportUser(
     val uid: String = "",

@@ -22,6 +22,7 @@ import com.sportflow.app.ui.screens.auth.LoginScreen
 import com.sportflow.app.ui.screens.bracket.BracketViewScreen
 import com.sportflow.app.ui.screens.events.EventsScreen
 import com.sportflow.app.ui.screens.home.HomeFeedScreen
+import com.sportflow.app.ui.screens.home.MyMatchesScreen
 import com.sportflow.app.ui.screens.live.LiveMatchCenterScreen
 import com.sportflow.app.ui.screens.profile.ProfileScreen
 import com.sportflow.app.ui.theme.*
@@ -144,7 +145,7 @@ fun SportFlowNavHost() {
                 EventsScreen(navController = navController)
             }
             composable(Screen.MyMatches.route) {
-                LiveMatchCenterScreen(navController = navController)
+                MyMatchesScreen(navController = navController)
             }
             composable(Screen.Profile.route) {
                 ProfileScreen(

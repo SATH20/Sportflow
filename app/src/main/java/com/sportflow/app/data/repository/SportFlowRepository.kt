@@ -30,6 +30,8 @@ class SportFlowRepository @Inject constructor(
         const val TOURNAMENTS_COLLECTION = "gnits_tournaments"
         const val USERS_COLLECTION       = "gnits_users"
         const val PAYMENTS_COLLECTION    = "gnits_payments"
+        const val REGISTRATIONS_COLLECTION = "registrations" // sub-collection under gnits_matches
+        const val NOTIFICATION_TRIGGERS  = "gnits_notification_triggers"
 
         // FCM topics — must match what Cloud Functions publishes to
         const val FCM_TOPIC_ALL         = "gnits_sports_all"
@@ -660,7 +662,7 @@ class SportFlowRepository @Inject constructor(
         topic: String
     ) {
         try {
-            firestore.collection("gnits_notification_triggers").add(
+            firestore.collection(NOTIFICATION_TRIGGERS).add(
                 mapOf(
                     "type"      to type,
                     "title"     to title,
@@ -674,5 +676,163 @@ class SportFlowRepository @Inject constructor(
         } catch (_: Exception) {
             // Non-critical — notification failure should not crash the scoring flow
         }
+    }
+
+    // ── Registration : transactional write ────────────────────────────────────────
+
+    /**
+     * Atomically registers the current user for a match.
+     * - Writes a Registration doc to gnits_matches/{matchId}/registrations
+     * - Increments the denormalized registrationCount on the match doc
+     * - Triggers a push notification to the user's department topic
+     * @throws IllegalStateException if user is not authenticated
+     * @throws IllegalArgumentException if the event is full or already registered
+     */
+    suspend fun registerForMatch(match: com.sportflow.app.data.model.Match) {
+        val user = auth.currentUser
+            ?: throw IllegalStateException("User not authenticated")
+
+        val matchRef  = firestore.collection(MATCHES_COLLECTION).document(match.id)
+        val regRef    = matchRef.collection(REGISTRATIONS_COLLECTION).document(user.uid)
+        val userRef   = firestore.collection(USERS_COLLECTION).document(user.uid)
+
+        firestore.runTransaction { tx ->
+            val matchSnap = tx.get(matchRef)
+            val regSnap   = tx.get(regRef)
+            val userSnap  = tx.get(userRef)
+
+            // Guard: already registered
+            if (regSnap.exists()) {
+                throw IllegalArgumentException("Already registered for this event")
+            }
+
+            // Guard: event full (maxRegistrations == 0 means unlimited)
+            val maxReg  = matchSnap.getLong("maxRegistrations")?.toInt() ?: 0
+            val curCount = matchSnap.getLong("registrationCount")?.toInt() ?: 0
+            if (maxReg > 0 && curCount >= maxReg) {
+                throw IllegalArgumentException("Event is full (${maxReg} max registrations)")
+            }
+
+            val userName    = userSnap.getString("displayName") ?: user.displayName ?: ""
+            val department  = userSnap.getString("department") ?: ""
+            val rollNumber  = userSnap.getString("rollNumber") ?: ""
+
+            val registration = hashMapOf(
+                "id"           to user.uid,
+                "uid"          to user.uid,
+                "matchId"      to match.id,
+                "tournamentId" to match.tournamentId,
+                "userName"     to userName,
+                "department"   to department,
+                "rollNumber"   to rollNumber,
+                "status"       to com.sportflow.app.data.model.RegistrationStatus.CONFIRMED.name,
+                "registeredAt" to com.google.firebase.Timestamp.now()
+            )
+
+            tx.set(regRef, registration)
+            tx.update(matchRef, "registrationCount",
+                com.google.firebase.firestore.FieldValue.increment(1))
+        }.await()
+
+        // Non-critical: push notification trigger
+        val dept = try {
+            firestore.collection(USERS_COLLECTION).document(user.uid)
+                .get().await().getString("department") ?: ""
+        } catch (_: Exception) { "" }
+
+        pushNotificationTrigger(
+            type    = "registration_success",
+            title   = "🎫 Registration Confirmed!",
+            body    = "You are registered for ${match.teamA} vs ${match.teamB} at ${match.venue}",
+            matchId = match.id,
+            topic   = if (dept.isNotBlank()) "dept_$dept" else FCM_TOPIC_ALL
+        )
+    }
+
+    /**
+     * Cancel an existing registration.
+     * - Deletes the registration doc
+     * - Decrements the registrationCount on the match doc (floor 0)
+     */
+    suspend fun cancelRegistration(matchId: String) {
+        val user = auth.currentUser
+            ?: throw IllegalStateException("User not authenticated")
+
+        val matchRef = firestore.collection(MATCHES_COLLECTION).document(matchId)
+        val regRef   = matchRef.collection(REGISTRATIONS_COLLECTION).document(user.uid)
+
+        firestore.runTransaction { tx ->
+            val matchSnap = tx.get(matchRef)
+            val curCount  = matchSnap.getLong("registrationCount")?.toInt() ?: 0
+
+            tx.delete(regRef)
+            if (curCount > 0) {
+                tx.update(matchRef, "registrationCount",
+                    com.google.firebase.firestore.FieldValue.increment(-1))
+            }
+        }.await()
+    }
+
+    /**
+     * Check if the current user is registered for a specific match.
+     * Returns null if user is not authenticated.
+     */
+    suspend fun getRegistrationStatus(matchId: String): com.sportflow.app.data.model.Registration? {
+        val uid = auth.currentUser?.uid ?: return null
+        val snap = firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(REGISTRATIONS_COLLECTION)
+            .document(uid)
+            .get()
+            .await()
+        return if (snap.exists()) snap.toObject(com.sportflow.app.data.model.Registration::class.java) else null
+    }
+
+    /**
+     * Real-time flow of all matches the current user has registered for.
+     * Queries the root gnits_matches collection for docs where the current user
+     * has a registration sub-document.
+     *
+     * Strategy: listen to the user's registration collection-group.
+     */
+    fun getMyRegisteredMatches(): Flow<List<com.sportflow.app.data.model.Match>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        // Use collectionGroup to query all "registrations" docs with this uid
+        val listener = firestore.collectionGroup(REGISTRATIONS_COLLECTION)
+            .whereEqualTo("uid", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+
+                val matchIds = snapshot?.documents?.mapNotNull { it.getString("matchId") }
+                    ?: emptyList()
+
+                if (matchIds.isEmpty()) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+
+                // Batch-fetch match docs (Firestore `whereIn` max 30 items)
+                firestore.collection(MATCHES_COLLECTION)
+                    .whereIn(com.google.firebase.firestore.FieldPath.documentId(),
+                        matchIds.take(30))
+                    .get()
+                    .addOnSuccessListener { matchSnap ->
+                        val matches = matchSnap.documents.mapNotNull {
+                            it.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = it.id)
+                        }.sortedByDescending { it.scheduledTime }
+                        trySend(matches)
+                    }
+                    .addOnFailureListener { /* best-effort */ }
+            }
+        awaitClose { listener.remove() }
     }
 }
