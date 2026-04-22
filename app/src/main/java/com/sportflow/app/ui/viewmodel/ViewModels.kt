@@ -281,6 +281,8 @@ data class AdminUiState(
     val isLoading: Boolean = true,
     val isGeneratingBracket: Boolean = false,
     val isCreatingMatch: Boolean = false,
+    /** Scorecards for the currently selected match (Referee Panel) */
+    val matchScorecards: List<PlayerScorecard> = emptyList(),
     val error: String? = null,
     val successMessage: String? = null
 )
@@ -307,6 +309,10 @@ class AdminViewModel @Inject constructor(
 
     private val _matchForm = MutableStateFlow(CreateMatchForm())
     val matchForm: StateFlow<CreateMatchForm> = _matchForm.asStateFlow()
+
+    /** Fixture engine configuration form state */
+    private val _fixtureConfig = MutableStateFlow(FixtureConfig())
+    val fixtureConfig: StateFlow<FixtureConfig> = _fixtureConfig.asStateFlow()
 
     init {
         loadFromFirebase()
@@ -392,14 +398,152 @@ class AdminViewModel @Inject constructor(
         }
     }
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // AI FIXTURE ENGINE — Dual-Mode (Single Elimination + Round Robin)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fun updateFixtureConfig(config: FixtureConfig) {
+        _fixtureConfig.update { config }
+    }
+
+    /**
+     * AI Mode: Generate all fixture match documents using a deterministic algorithm.
+     * Supports both Single Elimination and Round Robin based on [FixtureConfig.tournamentType].
+     * All matches are written to Firestore with proper timestamps and venue allocations.
+     */
+    fun generateAIFixtures() {
+        val config = _fixtureConfig.value
+        if (config.teams.size < 2) {
+            _uiState.update { it.copy(error = "Need at least 2 teams to generate fixtures") }
+            return
+        }
+        if (config.tournamentName.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter a tournament name") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGeneratingBracket = true) }
+            try {
+                val generator = FixtureGenerator()
+                val startTime = config.startTime ?: Timestamp.now()
+
+                val fixtures = when (config.tournamentType) {
+                    TournamentType.SINGLE_ELIMINATION -> generator.generateSingleElimination(
+                        teams          = config.teams,
+                        matchType      = config.sportType.ifBlank { "Football" },
+                        startTime      = startTime,
+                        tournamentId   = config.tournamentId,
+                        tournamentName = config.tournamentName,
+                        venueName      = config.venue,
+                        eligibilityText = config.eligibilityText,
+                        intervalMinutes = config.intervalMinutes
+                    )
+                    TournamentType.ROUND_ROBIN -> generator.generateRoundRobin(
+                        teams          = config.teams,
+                        matchType      = config.sportType.ifBlank { "Football" },
+                        startTime      = startTime,
+                        tournamentId   = config.tournamentId,
+                        tournamentName = config.tournamentName,
+                        venueName      = config.venue,
+                        eligibilityText = config.eligibilityText,
+                        intervalMinutes = config.intervalMinutes
+                    )
+                }
+
+                // Persist each fixture document to Firestore
+                fixtures.forEach { match -> repository.createMatch(match) }
+
+                _fixtureConfig.update { FixtureConfig() } // Reset config
+                _uiState.update {
+                    it.copy(
+                        isGeneratingBracket = false,
+                        successMessage = "🤖 AI Engine: ${fixtures.size} fixtures generated (${config.tournamentType.displayName})!"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isGeneratingBracket = false, error = e.message)
+                }
+            }
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MANUAL FIXTURE OVERRIDE — Admin can edit timings, venues, team swaps
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /**
+     * Apply a manual fixture edit. Triggers an immediate Firestore update.
+     * Since getAllMatches() is a live snapshot, the student Home Screen
+     * re-sorts "Upcoming Matches" instantly without a refresh.
+     */
+    fun applyManualEdit(edit: ManualFixtureEdit) {
+        viewModelScope.launch {
+            try {
+                repository.applyManualFixtureEdit(edit)
+                _uiState.update {
+                    it.copy(successMessage = "✏️ Fixture updated successfully")
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // REFEREE PANEL — Sport-Specific Player Scorecard Management
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /** Load all scorecards for the currently selected match */
+    private fun loadScorecardsForSelectedMatch(matchId: String) {
+        viewModelScope.launch {
+            repository.getScorecardsForMatch(matchId).collect { scorecards ->
+                _uiState.update { it.copy(matchScorecards = scorecards) }
+            }
+        }
+    }
+
+    /**
+     * Initialize blank scorecards for all registered players.
+     * Called automatically when Admin starts a match, or manually from Referee Panel.
+     */
+    fun initializeScorecards() {
+        val match = _uiState.value.selectedMatch ?: return
+        viewModelScope.launch {
+            try {
+                repository.initializeScorecardsForMatch(match.id, match.sportType)
+                _uiState.update { it.copy(successMessage = "📋 Scorecards initialized for all registered players") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    /**
+     * Increment a specific stat for a player in the Referee Panel.
+     * e.g. runsScored +1 for a Cricket player, aces +1 for a Badminton player.
+     */
+    fun incrementPlayerStat(playerId: String, statKey: String, delta: Int = 1) {
+        val matchId = _uiState.value.selectedMatch?.id ?: return
+        viewModelScope.launch {
+            try {
+                repository.incrementScorecardStat(matchId, playerId, statKey, delta)
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
     // ── Sport-Specific Live Scoring ─────────────────────────────────────────
 
     fun selectMatchForScoring(match: Match) {
         _uiState.update { it.copy(selectedMatch = match) }
+        loadScorecardsForSelectedMatch(match.id)
     }
 
     fun deselectMatch() {
-        _uiState.update { it.copy(selectedMatch = null) }
+        _uiState.update { it.copy(selectedMatch = null, matchScorecards = emptyList()) }
     }
 
     /** Universal dispatcher for any sport scoring action */
@@ -493,13 +637,15 @@ class AdminViewModel @Inject constructor(
 
     // ── Match Lifecycle ─────────────────────────────────────────────────────
 
-    /** Scheduled → Live */
+    /** Scheduled → Live (also auto-initializes scorecards) */
     fun startMatch() {
-        val matchId = _uiState.value.selectedMatch?.id ?: return
+        val match = _uiState.value.selectedMatch ?: return
         viewModelScope.launch {
             try {
-                repository.startMatch(matchId)
-                _uiState.update { it.copy(successMessage = "Match started!") }
+                repository.startMatch(match.id)
+                // Auto-initialize scorecards for all registered players
+                repository.initializeScorecardsForMatch(match.id, match.sportType)
+                _uiState.update { it.copy(successMessage = "Match started! Scorecards initialized.") }
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = e.message) }
             }
@@ -541,7 +687,8 @@ class AdminViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         successMessage = "Match completed! Winner advanced.",
-                        selectedMatch = null
+                        selectedMatch = null,
+                        matchScorecards = emptyList()
                     )
                 }
             } catch (e: Exception) {
@@ -704,14 +851,19 @@ class MyMatchesViewModel @Inject constructor(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// REGISTRATION VIEWMODEL — Register / Cancel with status-aware per-card state
+// REGISTRATION VIEWMODEL — Single source of truth via Firestore live snapshots
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data class RegistrationUiState(
-    /** matchId → whether user is registered */
+    /**
+     * Live set of matchIds for which the current user has an active registration.
+     * Backed by a real-time Firestore collectionGroup snapshot — any external
+     * deletion (e.g. admin or cancellation) reflects immediately across ALL screens.
+     */
     val registeredMatchIds: Set<String> = emptySet(),
-    /** matchId → actively processing (button loading) */
+    /** matchId → actively processing (button shows spinner) */
     val loadingMatchIds: Set<String> = emptySet(),
+    /** Non-null while a snackbar message should be shown */
     val successMessage: String? = null,
     val error: String? = null
 )
@@ -724,43 +876,97 @@ class RegistrationViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(RegistrationUiState())
     val uiState: StateFlow<RegistrationUiState> = _uiState.asStateFlow()
 
+    // ── Single Source of Truth — live Firestore snapshot ────────────────────
+    init {
+        observeRegistrations()
+    }
+
     /**
-     * Check and cache whether the current user is already registered for [matchId].
-     * Call once per visible card (e.g. in LaunchedEffect).
+     * Subscribe to all registration docs for the current user.
+     * Any add or delete in Firestore automatically updates [registeredMatchIds],
+     * so the Home Screen button state stays in sync without any manual refresh.
      */
-    fun checkRegistration(matchId: String) {
+    private fun observeRegistrations() {
         viewModelScope.launch {
-            try {
-                val reg = repository.getRegistrationStatus(matchId)
-                if (reg != null) {
-                    _uiState.update { it.copy(registeredMatchIds = it.registeredMatchIds + matchId) }
+            repository.observeMyRegisteredMatchIds()
+                .collect { ids ->
+                    _uiState.update { it.copy(registeredMatchIds = ids) }
                 }
-            } catch (_: Exception) {}
         }
     }
 
     /**
-     * Perform a transactional registration write.
-     * Optimistically updates loading state, then refreshes registration status.
+     * Re-initialise the live stream (e.g. after sign-in / sign-out).
+     * Call from the auth flow when a new user session starts.
      */
-    fun register(match: Match) {
+    fun refreshStream() {
+        observeRegistrations()
+    }
+
+    // ── RBAC guard ──────────────────────────────────────────────────────────
+
+    /**
+     * PLAYER-ONLY: Register for a match.
+     * Admins are physically blocked — this returns immediately with an error.
+     *
+     * Eligibility pre-check is performed against the live user profile
+     * before touching Firestore, giving instant UI feedback.
+     */
+    fun register(match: Match, currentUserRole: com.sportflow.app.data.model.UserRole) {
+        // ── RBAC: Admins CANNOT register as participants ────────────────────
+        if (currentUserRole == com.sportflow.app.data.model.UserRole.ADMIN) {
+            _uiState.update {
+                it.copy(error = "Admins are not permitted to register as match participants")
+            }
+            return
+        }
+
         val matchId = match.id
         viewModelScope.launch {
             _uiState.update { it.copy(loadingMatchIds = it.loadingMatchIds + matchId, error = null) }
             try {
+                // ── Eligibility pre-check (fast, before Firestore transaction) ──
+                val profile = repository.getCurrentUserProfile()
+                if (profile != null) {
+                    val dept = profile.department
+                    val year = profile.yearOfStudy
+
+                    if (match.allowedDepartments.isNotEmpty() &&
+                        dept.isNotBlank() &&
+                        match.allowedDepartments.none { it.equals(dept, ignoreCase = true) }
+                    ) {
+                        val allowed = match.allowedDepartments.joinToString(", ")
+                        throw IllegalArgumentException(
+                            "⚠️ Not eligible: only $allowed department(s) may register"
+                        )
+                    }
+                    if (match.allowedYears.isNotEmpty() &&
+                        year.isNotBlank() &&
+                        match.allowedYears.none { it.equals(year, ignoreCase = true) }
+                    ) {
+                        val allowed = match.allowedYears
+                            .mapNotNull { com.sportflow.app.data.model.GnitsYear.fromCode(it)?.displayName }
+                            .joinToString(", ")
+                        throw IllegalArgumentException(
+                            "⚠️ Not eligible: open to $allowed students only"
+                        )
+                    }
+                }
+
                 repository.registerForMatch(match)
+                // registeredMatchIds is updated reactively via the live stream —
+                // no manual update needed here.
                 _uiState.update {
                     it.copy(
-                        registeredMatchIds = it.registeredMatchIds + matchId,
-                        loadingMatchIds    = it.loadingMatchIds - matchId,
-                        successMessage     = "🎫 Registered for ${match.teamA} vs ${match.teamB}!"
+                        loadingMatchIds = it.loadingMatchIds - matchId,
+                        successMessage  = "🎫 Registered for ${match.teamA} vs ${match.teamB}!"
                     )
                 }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         loadingMatchIds = it.loadingMatchIds - matchId,
-                        error = e.message ?: "Registration failed"
+                        error           = e.message ?: "Registration failed"
                     )
                 }
             }
@@ -768,25 +974,38 @@ class RegistrationViewModel @Inject constructor(
     }
 
     /**
-     * Cancel an existing registration.
+     * PLAYER-ONLY: Cancel an existing registration (atomic transaction).
+     * Admins are physically blocked.
+     * Firestore transaction deletes the reg doc and decrements currentSquadCount.
+     * The live snapshot stream handles updating [registeredMatchIds] instantly.
      */
-    fun cancelRegistration(matchId: String) {
+    fun cancelRegistration(
+        matchId: String,
+        currentUserRole: com.sportflow.app.data.model.UserRole
+    ) {
+        if (currentUserRole == com.sportflow.app.data.model.UserRole.ADMIN) {
+            _uiState.update {
+                it.copy(error = "Admins cannot cancel participant registrations from this screen")
+            }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(loadingMatchIds = it.loadingMatchIds + matchId, error = null) }
             try {
                 repository.cancelRegistration(matchId)
+                // registeredMatchIds updated reactively — no manual update needed.
                 _uiState.update {
                     it.copy(
-                        registeredMatchIds = it.registeredMatchIds - matchId,
-                        loadingMatchIds    = it.loadingMatchIds - matchId,
-                        successMessage     = "Registration cancelled"
+                        loadingMatchIds = it.loadingMatchIds - matchId,
+                        successMessage  = "✅ Registration cancelled successfully"
                     )
                 }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
                         loadingMatchIds = it.loadingMatchIds - matchId,
-                        error = e.message ?: "Failed to cancel registration"
+                        error           = e.message ?: "Failed to cancel registration"
                     )
                 }
             }
@@ -795,5 +1014,52 @@ class RegistrationViewModel @Inject constructor(
 
     fun clearMessage() {
         _uiState.update { it.copy(successMessage = null, error = null) }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SCORECARD VIEWMODEL — Player's personal performance across matches
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+data class ScorecardUiState(
+    val selectedMatchId: String? = null,
+    val scorecard: PlayerScorecard? = null,
+    val isLoading: Boolean = false,
+    val error: String? = null
+)
+
+@HiltViewModel
+class ScorecardViewModel @Inject constructor(
+    private val repository: SportFlowRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(ScorecardUiState())
+    val uiState: StateFlow<ScorecardUiState> = _uiState.asStateFlow()
+
+    /**
+     * Load the current player's personal scorecard for the given match.
+     * This is called when the user taps "View My Performance" on a completed or live match.
+     */
+    fun loadScorecard(matchId: String) {
+        if (matchId == _uiState.value.selectedMatchId) return
+        _uiState.update { it.copy(selectedMatchId = matchId, isLoading = true, error = null) }
+        viewModelScope.launch {
+            try {
+                repository.getMyScorecard(matchId).collect { scorecard ->
+                    _uiState.update {
+                        it.copy(
+                            scorecard = scorecard,
+                            isLoading = false
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = e.message) }
+            }
+        }
+    }
+
+    fun clearScorecard() {
+        _uiState.update { ScorecardUiState() }
     }
 }

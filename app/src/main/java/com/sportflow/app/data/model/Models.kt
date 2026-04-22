@@ -4,6 +4,21 @@ import com.google.firebase.Timestamp
 
 // ── GNITS-Specific Constants ────────────────────────────────────────────────
 
+/** Academic years for GNITS students (B.Tech 4-year programme) */
+enum class GnitsYear(val displayName: String) {
+    FIRST_YEAR("1st Year"),
+    SECOND_YEAR("2nd Year"),
+    THIRD_YEAR("3rd Year"),
+    FOURTH_YEAR("4th Year");
+
+    companion object {
+        fun fromCode(code: String): GnitsYear? =
+            entries.find { it.name.equals(code, ignoreCase = true) }
+        val allCodes: List<String> get() = entries.map { it.name }
+        val allNames: List<String> get() = entries.map { it.displayName }
+    }
+}
+
 /** All 8 departments of GNITS */
 enum class GnitsDepartment(val displayName: String) {
     CSE("Computer Science & Engineering"),
@@ -122,7 +137,17 @@ data class Match(
     /** Total registered count (denormalized from registrations sub-collection) */
     val registrationCount: Int = 0,
     /** Next match ID in the bracket — set by FixtureGenerator */
-    val nextMatchId: String = ""
+    val nextMatchId: String = "",
+
+    // ── Squad Slot Management ─────────────────────────────────────────────
+    /** Maximum players allowed in the squad (0 = unlimited squad size) */
+    val maxSquadSize: Int = 0,
+    /** Current number of confirmed squad members (denormalized counter) */
+    val currentSquadCount: Int = 0,
+    /** Departments allowed to register (empty = all departments eligible) */
+    val allowedDepartments: List<String> = emptyList(),
+    /** Academic years allowed to register e.g. ["FIRST_YEAR","SECOND_YEAR"] (empty = all) */
+    val allowedYears: List<String> = emptyList()
 )
 
 // ── Sport Rules Engine ───────────────────────────────────────────────────────
@@ -342,7 +367,9 @@ data class Tournament(
     /** Maximum teams per department (0 = no restriction) */
     val deptQuota: Int = 0,
     /** Allowed departments list (empty = all) */
-    val allowedDepartments: List<String> = emptyList()
+    val allowedDepartments: List<String> = emptyList(),
+    /** Allowed academic years list (empty = all years eligible) */
+    val allowedYears: List<String> = emptyList()
 )
 
 enum class TournamentStatus { REGISTRATION, IN_PROGRESS, COMPLETED, CANCELLED }
@@ -383,6 +410,7 @@ data class Registration(
     val tournamentId: String = "",
     val userName: String = "",
     val department: String = "",
+    val yearOfStudy: String = "",        // GnitsYear code e.g. "SECOND_YEAR"
     val rollNumber: String = "",
     val status: RegistrationStatus = RegistrationStatus.CONFIRMED,
     val registeredAt: Timestamp? = null
@@ -395,8 +423,197 @@ data class SportUser(
     val role: UserRole = UserRole.PLAYER,
     val rollNumber: String = "",
     val department: String = "",
+    val yearOfStudy: String = "",        // GnitsYear code e.g. "SECOND_YEAR"
     val teamId: String = "",
     val photoUrl: String = ""
 )
 
 enum class UserRole { PLAYER, ADMIN, ORGANIZER }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TOURNAMENT TYPE — for Dual-Mode Fixture Engine
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+enum class TournamentType(val displayName: String) {
+    SINGLE_ELIMINATION("Single Elimination"),
+    ROUND_ROBIN("Round Robin");
+
+    companion object {
+        fun fromString(s: String): TournamentType =
+            entries.firstOrNull { it.name.equals(s, ignoreCase = true) || it.displayName.equals(s, ignoreCase = true) }
+                ?: SINGLE_ELIMINATION
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PLAYER SCORECARD — Sport-Specific Personal Performance (Strategy Pattern)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Personal scorecard stored at:
+ *   gnits_matches/{matchId}/scorecards/{playerId}
+ *
+ * The [sportData] map holds sport-specific attributes.
+ * The Strategy Pattern is implemented via [PlayerScorecardStrategy] which knows
+ * how to interpret this map for each sport type.
+ */
+data class PlayerScorecard(
+    val id: String = "",
+    val matchId: String = "",
+    val playerId: String = "",
+    val playerName: String = "",
+    val department: String = "",
+    val team: String = "",               // "A" or "B"
+    val sportType: String = "",         // SportType enum name
+    /** Sport-specific key-value stats — interpreted by the SportStrategy */
+    val sportData: Map<String, Any> = emptyMap(),
+    val updatedAt: com.google.firebase.Timestamp? = null
+)
+
+/**
+ * Strategy Pattern — returns typed attribute labels and values for UI display,
+ * plus the Firestore field keys for the Admin Referee Panel scoring buttons.
+ */
+object PlayerScorecardStrategy {
+
+    data class StatLabel(
+        val key: String,         // Firestore field key inside sportData map
+        val label: String,       // Display label e.g. "Runs Scored"
+        val emoji: String,       // Visual emoji
+        val defaultValue: Any = 0 // Default value for initialization
+    )
+
+    /**
+     * Returns the ordered list of stat attributes for a given sport.
+     * The Admin Referee Panel renders exactly these fields.
+     * The Player Performance tab displays them in this order.
+     */
+    fun getAttributes(sportType: String): List<StatLabel> {
+        return when (SportType.fromString(sportType)) {
+
+            SportType.CRICKET -> listOf(
+                StatLabel("runsScored", "Runs Scored", "🏏"),
+                StatLabel("ballsFaced", "Balls Faced", "⚾"),
+                StatLabel("fours", "Fours", "4️⃣"),
+                StatLabel("sixes", "Sixes", "6️⃣"),
+                StatLabel("wicketsTaken", "Wickets Taken", "🎯"),
+                StatLabel("oversBowled", "Overs Bowled", "🔄", defaultValue = "0.0"),
+                StatLabel("runsConceded", "Runs Conceded", "📊"),
+                StatLabel("economyRate", "Economy Rate", "📈", defaultValue = "0.00"),
+                StatLabel("catches", "Catches", "🤲"),
+                StatLabel("runOuts", "Run Outs", "🏃")
+            )
+
+            SportType.VOLLEYBALL -> listOf(
+                StatLabel("setsWon", "Sets Won", "🏐"),
+                StatLabel("aces", "Aces", "⭐"),
+                StatLabel("kills", "Kills", "💥"),
+                StatLabel("blocks", "Blocks", "🧱"),
+                StatLabel("digs", "Digs", "🖐️"),
+                StatLabel("serviceErrors", "Service Errors", "❌"),
+                StatLabel("attackErrors", "Attack Errors", "🚫")
+            )
+
+            SportType.BADMINTON -> listOf(
+                StatLabel("setsWon", "Sets Won", "🏸"),
+                StatLabel("aces", "Aces", "⭐"),
+                StatLabel("smashes", "Smashes", "💨"),
+                StatLabel("drops", "Drop Shots", "🎯"),
+                StatLabel("netPoints", "Net Points", "🕸️"),
+                StatLabel("serviceErrors", "Service Errors", "❌"),
+                StatLabel("unforcedErrors", "Unforced Errors", "🚫")
+            )
+
+            SportType.TABLE_TENNIS -> listOf(
+                StatLabel("setsWon", "Sets Won", "🏓"),
+                StatLabel("aces", "Aces", "⭐"),
+                StatLabel("winners", "Winners", "💥"),
+                StatLabel("serviceErrors", "Service Errors", "❌"),
+                StatLabel("unforcedErrors", "Unforced Errors", "🚫")
+            )
+
+            SportType.BASKETBALL -> listOf(
+                StatLabel("points", "Points", "🏀"),
+                StatLabel("rebounds", "Rebounds", "🔄"),
+                StatLabel("assists", "Assists", "🤝"),
+                StatLabel("steals", "Steals", "🤏"),
+                StatLabel("blocks", "Blocks", "🧱"),
+                StatLabel("turnovers", "Turnovers", "❌"),
+                StatLabel("freeThrowsMade", "Free Throws Made", "🎯"),
+                StatLabel("freeThrowsAttempted", "Free Throws Attempted", "🏹"),
+                StatLabel("threePointers", "3-Pointers Made", "🌟")
+            )
+
+            SportType.FOOTBALL -> listOf(
+                StatLabel("goals", "Goals", "⚽"),
+                StatLabel("assists", "Assists", "🤝"),
+                StatLabel("shots", "Shots", "🎯"),
+                StatLabel("shotsOnTarget", "Shots on Target", "🥅"),
+                StatLabel("passes", "Passes", "📦"),
+                StatLabel("tackles", "Tackles", "💪"),
+                StatLabel("fouls", "Fouls", "🟨"),
+                StatLabel("yellowCards", "Yellow Cards", "🟡"),
+                StatLabel("redCards", "Red Cards", "🔴")
+            )
+
+            SportType.KABADDI -> listOf(
+                StatLabel("raidPoints", "Raid Points", "🤸"),
+                StatLabel("tacklePoints", "Tackle Points", "💪"),
+                StatLabel("bonusPoints", "Bonus Points", "⭐"),
+                StatLabel("superRaids", "Super Raids", "🔥"),
+                StatLabel("superTackles", "Super Tackles", "🛡️"),
+                StatLabel("emptyRaids", "Empty Raids", "❌")
+            )
+
+            SportType.ATHLETICS -> listOf(
+                StatLabel("position", "Position", "🏅"),
+                StatLabel("timeTaken", "Time / Distance", "⏱️", defaultValue = ""),
+                StatLabel("personalBest", "Personal Best", "🌟", defaultValue = ""),
+                StatLabel("points", "Points", "📊")
+            )
+        }
+    }
+
+    /** Creates a default sportData map with zero/empty values for all attributes */
+    fun createDefault(sportType: String): Map<String, Any> {
+        return getAttributes(sportType).associate { it.key to it.defaultValue }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MANUAL FIXTURE EDIT — For Admin drag-and-drop override
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Represents a manual edit to an existing fixture (match).
+ * The Admin can change the scheduled time, venue, or swap team names
+ * via the Manual Fixture Editor in the Admin Dashboard.
+ *
+ * Each edit triggers an immediate Firestore update + StateFlow emission
+ * so all student Home Screens reactively re-sort the "Upcoming Matches" list.
+ */
+data class ManualFixtureEdit(
+    val matchId: String,
+    val newScheduledTime: com.google.firebase.Timestamp? = null,
+    val newVenue: String? = null,
+    val newTeamA: String? = null,
+    val newTeamB: String? = null,
+    val newTeamADepartment: String? = null,
+    val newTeamBDepartment: String? = null
+)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// FIXTURE GENERATION CONFIG — Input for the AI Fixture Engine
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+data class FixtureConfig(
+    val tournamentId: String = "",
+    val tournamentName: String = "",
+    val tournamentType: TournamentType = TournamentType.SINGLE_ELIMINATION,
+    val sportType: String = "",
+    val teams: List<String> = emptyList(),
+    val startTime: com.google.firebase.Timestamp? = null,
+    val venue: String = GnitsVenue.MAIN_GROUND.displayName,
+    val intervalMinutes: Long = 60,
+    val eligibilityText: String = "All GNITS students"
+)

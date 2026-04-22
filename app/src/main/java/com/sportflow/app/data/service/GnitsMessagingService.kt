@@ -21,6 +21,7 @@ class GnitsMessagingService : FirebaseMessagingService() {
         const val CHANNEL_MATCH_START = "gnits_match_start"
         const val CHANNEL_TOURNAMENT  = "gnits_tournament"
         const val CHANNEL_PAYMENT     = "gnits_payment"
+        const val CHANNEL_SQUAD_MGMT  = "gnits_squad_management"
 
         /**
          * Create all notification channels. Call this once from Application.onCreate()
@@ -48,6 +49,10 @@ class GnitsMessagingService : FirebaseMessagingService() {
                 Ch(CHANNEL_PAYMENT,
                     "💳 Payment Verification",
                     "Status updates on your tournament registration payment",
+                    NotificationManager.IMPORTANCE_HIGH),
+                Ch(CHANNEL_SQUAD_MGMT,
+                    "🔐 Squad Slot Alerts",
+                    "Notified when a squad fills up or a spot opens. Register fast when a slot opens!",
                     NotificationManager.IMPORTANCE_HIGH)
             ).forEach { ch ->
                 if (manager.getNotificationChannel(ch.id) == null) {
@@ -98,7 +103,11 @@ class GnitsMessagingService : FirebaseMessagingService() {
         val channelId = when (type) {
             "score_update"  -> CHANNEL_LIVE_SCORE
             "match_start"   -> CHANNEL_MATCH_START
+            "match_end",
             "tournament"    -> CHANNEL_TOURNAMENT
+            "squad_closed",
+            "spot_opened",
+            "registration_success" -> CHANNEL_SQUAD_MGMT
             "payment"       -> CHANNEL_PAYMENT
             else            -> CHANNEL_MATCH_START
         }

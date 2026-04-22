@@ -39,6 +39,7 @@ import com.sportflow.app.ui.viewmodel.RegistrationViewModel
 @Composable
 fun HomeFeedScreen(
     navController: NavHostController,
+    currentUser: SportUser? = null,
     isAdmin: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(),
     regViewModel: RegistrationViewModel = hiltViewModel()
@@ -225,16 +226,36 @@ fun HomeFeedScreen(
                         is Match -> {
                             val isRegistered = feedItem.id in regState.registeredMatchIds
                             val isLoading    = feedItem.id in regState.loadingMatchIds
-                            LaunchedEffect(feedItem.id) {
-                                regViewModel.checkRegistration(feedItem.id)
+
+                            // ── Eligibility mismatch detection (department + year) ──────────
+                            val eligibilityBlocked = remember(feedItem, currentUser) {
+                                if (currentUser == null) false
+                                else {
+                                    val deptBlocked = feedItem.allowedDepartments.isNotEmpty() &&
+                                        currentUser.department.isNotBlank() &&
+                                        feedItem.allowedDepartments.none {
+                                            it.equals(currentUser.department, ignoreCase = true)
+                                        }
+                                    val yearBlocked = feedItem.allowedYears.isNotEmpty() &&
+                                        currentUser.yearOfStudy.isNotBlank() &&
+                                        feedItem.allowedYears.none {
+                                            it.equals(currentUser.yearOfStudy, ignoreCase = true)
+                                        }
+                                    deptBlocked || yearBlocked
+                                }
                             }
+
                             EventFeedCard(
-                                match         = feedItem,
-                                isRegistered  = isRegistered,
-                                isRegistering = isLoading,
-                                onRegister    = {
-                                    if (isRegistered) regViewModel.cancelRegistration(feedItem.id)
-                                    else regViewModel.register(feedItem)
+                                match             = feedItem,
+                                isRegistered      = isRegistered,
+                                isRegistering     = isLoading,
+                                eligibilityBlocked = eligibilityBlocked,
+                                // Admins physically cannot register — hide the button entirely
+                                showRegisterButton = !isAdmin,
+                                onRegister = {
+                                    val role = currentUser?.role ?: UserRole.PLAYER
+                                    if (isRegistered) regViewModel.cancelRegistration(feedItem.id, role)
+                                    else             regViewModel.register(feedItem, role)
                                 },
                                 onClick = { }
                             )
@@ -480,12 +501,8 @@ private fun TopTournamentHero(
                         color = Color.White.copy(alpha = 0.8f)
                     )
                     Text("•", color = Color.White.copy(alpha = 0.5f))
-                    // Eligibility text in hero
                     Text(
-                        text = if (tournament.eligibilityText.isNotBlank())
-                            tournament.eligibilityText
-                        else
-                            tournament.prizePool.ifEmpty { "GNITS Inter-Dept" },
+                        text = tournament.eligibilityText.ifBlank { "GNITS Inter-Dept" },
                         style = SportFlowTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.9f),
                         fontWeight = FontWeight.Bold
@@ -502,16 +519,22 @@ private fun TopTournamentHero(
     }
 }
 
-// ── Event Feed Card — Upcoming Match with Eligibility + Register button ────────
+// ── Event Feed Card — Upcoming Match with Eligibility + Register button ────────────
 
 @Composable
 private fun EventFeedCard(
     match: Match,
     isRegistered: Boolean = false,
     isRegistering: Boolean = false,
+    eligibilityBlocked: Boolean = false,
+    showRegisterButton: Boolean = true,      // false for ADMIN mode
     onRegister: () -> Unit = {},
     onClick: () -> Unit
 ) {
+    // Squad slot state derived from the new model fields
+    val isSquadFull = match.maxSquadSize > 0 &&
+        match.currentSquadCount >= match.maxSquadSize &&
+        !isRegistered                               // registered users keep their cancel button
     SportCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -578,17 +601,82 @@ private fun EventFeedCard(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
-                        Icons.Outlined.VerifiedUser,
+                        if (eligibilityBlocked) Icons.Outlined.Warning else Icons.Outlined.VerifiedUser,
                         contentDescription = "Eligibility",
-                        tint = SuccessGreen,
+                        tint = if (eligibilityBlocked) WarningAmber else SuccessGreen,
                         modifier = Modifier.size(13.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = match.eligibilityText,
+                        text = if (eligibilityBlocked)
+                            "⚠️ ${match.eligibilityText} — you are not eligible"
+                        else
+                            match.eligibilityText,
                         style = SportFlowTheme.typography.bodySmall,
-                        color = SuccessGreen,
+                        color = if (eligibilityBlocked) WarningAmber else SuccessGreen,
                         fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Allowed years badge (when year-restricted)
+            if (match.allowedYears.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Outlined.School,
+                        contentDescription = "Allowed years",
+                        tint = InfoBlue,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    val yearLabels = match.allowedYears
+                        .mapNotNull { com.sportflow.app.data.model.GnitsYear.fromCode(it)?.displayName }
+                        .ifEmpty { match.allowedYears }
+                        .joinToString(", ")
+                    Text(
+                        text = "Open to: $yearLabels",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = InfoBlue,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Squad slots progress indicator
+            if (match.maxSquadSize > 0) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val slotsFraction = (match.currentSquadCount.toFloat() / match.maxSquadSize).coerceIn(0f, 1f)
+                val slotsColor = when {
+                    slotsFraction >= 1f   -> ErrorRed
+                    slotsFraction >= 0.8f -> WarningAmber
+                    else                  -> SuccessGreen
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Group,
+                        contentDescription = "Squad slots",
+                        tint = slotsColor,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = "${match.currentSquadCount}/${match.maxSquadSize} slots",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = slotsColor,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    LinearProgressIndicator(
+                        progress = { slotsFraction },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp)),
+                        color = slotsColor,
+                        trackColor = slotsColor.copy(alpha = 0.15f)
                     )
                 }
             }
@@ -612,8 +700,8 @@ private fun EventFeedCard(
                     }
                 )
 
-                // Register button — only for SCHEDULED events
-                if (match.status == MatchStatus.SCHEDULED) {
+                // Register button — PLAYER only + SCHEDULED + not blocked
+                if (showRegisterButton && match.status == MatchStatus.SCHEDULED) {
                     when {
                         isRegistering -> CircularProgressIndicator(
                             modifier = Modifier.size(24.dp),
@@ -637,6 +725,51 @@ private fun EventFeedCard(
                                 text = "Registered",
                                 style = SportFlowTheme.typography.labelMedium,
                                 color = SuccessGreen,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        // ⚠️ Hard eligibility block — WarningAmber chip, no action
+                        eligibilityBlocked -> Button(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                disabledContainerColor = WarningAmber.copy(alpha = 0.15f),
+                                disabledContentColor   = WarningAmber
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Not Eligible",
+                                style = SportFlowTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        isSquadFull -> Button(
+                            onClick = {},
+                            enabled = false,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                disabledContainerColor = TextTertiary.copy(alpha = 0.15f),
+                                disabledContentColor   = TextTertiary
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Squad Full",
+                                style = SportFlowTheme.typography.labelMedium,
                                 fontWeight = FontWeight.Bold
                             )
                         }

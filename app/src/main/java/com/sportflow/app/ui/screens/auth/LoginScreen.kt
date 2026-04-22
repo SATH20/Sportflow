@@ -29,7 +29,6 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
-import com.sportflow.app.data.model.GnitsDepartment
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AuthViewModel
@@ -47,10 +46,8 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var rollNumber by remember { mutableStateOf("") }
-    var selectedDepartment by remember { mutableStateOf("") }
     var isSignUp by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
-    var departmentExpanded by remember { mutableStateOf(false) }
 
     // Navigate on success
     LaunchedEffect(uiState.isLoggedIn) {
@@ -164,67 +161,6 @@ fun LoginScreen(
                             onImeAction = { focusManager.moveFocus(FocusDirection.Down) }
                         )
                         Spacer(modifier = Modifier.height(14.dp))
-
-                        // Department Dropdown
-                        ExposedDropdownMenuBox(
-                            expanded = departmentExpanded,
-                            onExpandedChange = { departmentExpanded = !departmentExpanded }
-                        ) {
-                            OutlinedTextField(
-                                value = if (selectedDepartment.isNotBlank())
-                                    GnitsDepartment.fromCode(selectedDepartment)?.displayName ?: selectedDepartment
-                                else "",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = {
-                                    Text(
-                                        text = "Department",
-                                        style = SportFlowTheme.typography.bodyMedium
-                                    )
-                                },
-                                leadingIcon = {
-                                    Icon(
-                                        imageVector = Icons.Outlined.School,
-                                        contentDescription = null,
-                                        tint = SoftWhiteDim
-                                    )
-                                },
-                                trailingIcon = {
-                                    ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded)
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = GnitsOrangeGlow,
-                                    unfocusedBorderColor = GlassBorder,
-                                    cursorColor = GnitsOrangeGlow,
-                                    focusedLabelColor = GnitsOrangeGlowLight,
-                                    unfocusedLabelColor = SoftWhiteDim,
-                                    focusedTextColor = SoftWhite,
-                                    unfocusedTextColor = SoftWhite,
-                                    focusedTrailingIconColor = SoftWhiteDim,
-                                    unfocusedTrailingIconColor = SoftWhiteDim
-                                ),
-                                singleLine = true
-                            )
-                            ExposedDropdownMenu(
-                                expanded = departmentExpanded,
-                                onDismissRequest = { departmentExpanded = false }
-                            ) {
-                                GnitsDepartment.entries.forEach { dept ->
-                                    DropdownMenuItem(
-                                        text = { Text("${dept.name} — ${dept.displayName}") },
-                                        onClick = {
-                                            selectedDepartment = dept.name
-                                            departmentExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(14.dp))
                     }
 
                     // Email
@@ -253,7 +189,7 @@ fun LoginScreen(
                         imeAction = ImeAction.Done,
                         onImeAction = {
                             focusManager.clearFocus()
-                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
+                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, "")
                             else viewModel.signIn(email, password)
                         }
                     )
@@ -276,7 +212,7 @@ fun LoginScreen(
                         else if (isSignUp) "Create Account"
                         else "Sign In",
                         onClick = {
-                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
+                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, "")
                             else viewModel.signIn(email, password)
                         },
                         modifier = Modifier.fillMaxWidth(),

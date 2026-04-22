@@ -46,6 +46,26 @@ sealed class Screen(
     data object Admin : Screen("admin", "Admin", Icons.Filled.AdminPanelSettings, Icons.Outlined.AdminPanelSettings)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-role bottom nav definitions
+//   PLAYER : Home | Events | My Matches | Profile
+//   ADMIN  : Home | Events | Admin      | Profile
+// Each role's composable routes are PHYSICALLY ABSENT from the opposite nav host.
+// ─────────────────────────────────────────────────────────────────────────────
+private val playerNavItems = listOf(
+    Screen.Home,
+    Screen.Events,
+    Screen.MyMatches,
+    Screen.Profile
+)
+
+private val adminNavItems = listOf(
+    Screen.Home,
+    Screen.Events,
+    Screen.Admin,
+    Screen.Profile
+)
+
 @Composable
 fun SportFlowNavHost() {
     val authViewModel: AuthViewModel = hiltViewModel()
@@ -55,12 +75,10 @@ fun SportFlowNavHost() {
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    val bottomNavItems = listOf(
-        Screen.Home,
-        Screen.Events,
-        Screen.MyMatches,
-        Screen.Profile
-    )
+    val isAdmin = authState.userRole == UserRole.ADMIN
+
+    // Role-aware bottom nav items — completely different per role
+    val bottomNavItems = if (isAdmin) adminNavItems else playerNavItems
 
     val showBottomBar = bottomNavItems.any { screen ->
         currentDestination?.hierarchy?.any { it.route == screen.route } == true
@@ -127,7 +145,7 @@ fun SportFlowNavHost() {
             enterTransition = { fadeIn(tween(200)) },
             exitTransition = { fadeOut(tween(200)) }
         ) {
-            // Auth Screen
+            // ── Auth ─────────────────────────────────────────────────────
             composable(Screen.Login.route) {
                 LoginScreen(
                     navController = navController,
@@ -135,27 +153,45 @@ fun SportFlowNavHost() {
                 )
             }
 
+            // ── Home (both roles) ─────────────────────────────────────────
             composable(Screen.Home.route) {
                 HomeFeedScreen(
                     navController = navController,
-                    isAdmin = authState.userRole == UserRole.ADMIN
+                    currentUser   = authState.currentUser,
+                    isAdmin       = isAdmin
                 )
             }
+
+            // ── Events (both roles) ───────────────────────────────────────
             composable(Screen.Events.route) {
                 EventsScreen(navController = navController)
             }
-            composable(Screen.MyMatches.route) {
-                MyMatchesScreen(navController = navController)
+
+            // ── My Matches — PLAYER ONLY ──────────────────────────────────
+            // Physically absent (composable not registered) for ADMIN sessions.
+            if (!isAdmin) {
+                composable(Screen.MyMatches.route) {
+                    MyMatchesScreen(
+                        navController   = navController,
+                        currentUserRole = authState.userRole ?: UserRole.PLAYER
+                    )
+                }
             }
+
+            // ── Profile (both roles) ──────────────────────────────────────
             composable(Screen.Profile.route) {
                 ProfileScreen(
                     navController = navController,
                     authViewModel = authViewModel
                 )
             }
+
+            // ── Live Match (both roles — view only) ───────────────────────
             composable(Screen.LiveMatch.route) {
                 LiveMatchCenterScreen(navController = navController)
             }
+
+            // ── Bracket (both roles) ──────────────────────────────────────
             composable(
                 route = Screen.Bracket.route,
                 arguments = listOf(
@@ -171,9 +207,13 @@ fun SportFlowNavHost() {
                     navController = navController
                 )
             }
-            // Admin route — only accessible if role == ADMIN
-            composable(Screen.Admin.route) {
-                AdminDashboardScreen(navController = navController)
+
+            // ── Admin Dashboard — ADMIN ONLY ──────────────────────────────
+            // Physically absent (composable not registered) for PLAYER sessions.
+            if (isAdmin) {
+                composable(Screen.Admin.route) {
+                    AdminDashboardScreen(navController = navController)
+                }
             }
         }
     }

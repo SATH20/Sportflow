@@ -1,5 +1,7 @@
 package com.sportflow.app.ui.screens.home
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,24 +28,27 @@ import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.MyMatchesViewModel
 import com.sportflow.app.ui.viewmodel.RegistrationViewModel
+import com.sportflow.app.ui.viewmodel.ScorecardViewModel
 
 /**
  * My Matches Screen — shows only the events the current GNITS student is registered for.
  *
- * Filters matches based on the current user's UID presence in the
- * gnits_matches/{matchId}/registrations sub-collection.
- * Each card indicates the live match status and allows cancelling a registration
- * if the match hasn't started yet.
+ * PLAYER ONLY: This route is physically absent from the NavHost when role == ADMIN.
+ * The currentUserRole parameter is forwarded to cancelRegistration() so the ViewModel
+ * RBAC guard fires even if a user somehow finds a deep-link path to this screen.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyMatchesScreen(
     navController: NavHostController,
+    currentUserRole: UserRole = UserRole.PLAYER,
     viewModel: MyMatchesViewModel = hiltViewModel(),
-    regViewModel: RegistrationViewModel = hiltViewModel()
+    regViewModel: RegistrationViewModel = hiltViewModel(),
+    scorecardViewModel: ScorecardViewModel = hiltViewModel()
 ) {
     val uiState  by viewModel.uiState.collectAsStateWithLifecycle()
     val regState by regViewModel.uiState.collectAsStateWithLifecycle()
+    val scorecardState by scorecardViewModel.uiState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(regState.successMessage, regState.error) {
@@ -135,17 +140,28 @@ fun MyMatchesScreen(
                     key = { it.id }
                 ) { match ->
                     val isLoadingReg = match.id in regState.loadingMatchIds
+                    val isShowingScorecard = scorecardState.selectedMatchId == match.id
                     MyMatchCard(
-                        match         = match,
+                        match           = match,
                         isUnregistering = isLoadingReg,
-                        onCancelReg   = {
+                        scorecard       = if (isShowingScorecard) scorecardState.scorecard else null,
+                        isScorecardLoading = isShowingScorecard && scorecardState.isLoading,
+                        onCancelReg = {
                             if (match.status == MatchStatus.SCHEDULED) {
-                                regViewModel.cancelRegistration(match.id)
+                                // Pass role so ViewModel RBAC guard can verify
+                                regViewModel.cancelRegistration(match.id, currentUserRole)
                             }
                         },
-                        onViewLive    = {
+                        onViewLive = {
                             if (match.status == MatchStatus.LIVE) {
                                 navController.navigate("live")
+                            }
+                        },
+                        onViewPerformance = {
+                            if (isShowingScorecard) {
+                                scorecardViewModel.clearScorecard()
+                            } else {
+                                scorecardViewModel.loadScorecard(match.id)
                             }
                         }
                     )
@@ -266,13 +282,17 @@ private fun StatPill(label: String, value: String, color: Color, modifier: Modif
 private fun MyMatchCard(
     match: Match,
     isUnregistering: Boolean = false,
+    scorecard: PlayerScorecard? = null,
+    isScorecardLoading: Boolean = false,
     onCancelReg: () -> Unit,
-    onViewLive: () -> Unit
+    onViewLive: () -> Unit,
+    onViewPerformance: () -> Unit = {}
 ) {
     SportCard(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 6.dp),
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .animateContentSize(animationSpec = tween(300)),
         onClick = { if (match.status == MatchStatus.LIVE) onViewLive() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -508,6 +528,140 @@ private fun MyMatchCard(
                     }
                     else -> { /* Completed / Cancelled — no action */ }
                 }
+            }
+
+            // ── Performance Button (for Live, Completed) ─────────────────
+            if (match.status == MatchStatus.LIVE || match.status == MatchStatus.HALFTIME || match.status == MatchStatus.COMPLETED) {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onViewPerformance,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (scorecard != null) GnitsOrange else InfoBlue
+                    ),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Icon(
+                        if (scorecard != null) Icons.Filled.ExpandLess else Icons.Filled.BarChart,
+                        contentDescription = null,
+                        tint = if (scorecard != null) GnitsOrange else InfoBlue,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (scorecard != null) "Hide Performance" else "View My Performance",
+                        style = SportFlowTheme.typography.labelMedium,
+                        color = if (scorecard != null) GnitsOrange else InfoBlue,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // ── Inline Scorecard (expanded when loaded) ──────────────────
+            if (isScorecardLoading) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = GnitsOrange, modifier = Modifier.size(24.dp))
+                }
+            } else if (scorecard != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                PlayerPerformanceCard(scorecard = scorecard, sportType = match.sportType)
+            }
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PLAYER PERFORMANCE CARD — Sport-Specific Personal Scorecard Display
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@Composable
+private fun PlayerPerformanceCard(
+    scorecard: PlayerScorecard,
+    sportType: String
+) {
+    val attributes = PlayerScorecardStrategy.getAttributes(sportType)
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = GnitsOrangeLight.copy(alpha = 0.5f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, GnitsOrange.copy(alpha = 0.2f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Assessment,
+                    contentDescription = null,
+                    tint = GnitsOrangeDark,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Personal Scorecard",
+                    style = SportFlowTheme.typography.labelLarge,
+                    color = GnitsOrangeDark,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Stats grid — 2 columns
+            val rows = attributes.chunked(2)
+            rows.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { attr ->
+                        val currentValue = scorecard.sportData[attr.key]
+                        val displayVal = when (currentValue) {
+                            is Number -> currentValue.toInt().toString()
+                            is String -> currentValue.ifBlank { "—" }
+                            else -> "0"
+                        }
+
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp),
+                            color = PureWhite
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(attr.emoji, style = SportFlowTheme.typography.bodySmall)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        attr.label,
+                                        style = SportFlowTheme.typography.labelSmall,
+                                        color = TextTertiary,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        displayVal,
+                                        style = SportFlowTheme.typography.headlineSmall,
+                                        color = TextPrimary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    // Fill last row if odd number of items
+                    if (row.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
             }
         }
     }

@@ -40,9 +40,14 @@ fun AdminDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val matchForm by viewModel.matchForm.collectAsStateWithLifecycle()
+    val fixtureConfig by viewModel.fixtureConfig.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Create Match", "Live Scoring", "Matches", "Payments", "Tournaments")
+    val tabs = listOf(
+        "Create Match", "Live Scoring", "AI Fixtures",
+        "Manual Editor", "Referee Panel",
+        "Matches", "Payments", "Tournaments"
+    )
 
     LazyColumn(
         modifier = Modifier
@@ -200,6 +205,80 @@ fun AdminDashboardScreen(
                 }
             }
             2 -> {
+                // ── AI FIXTURE ENGINE TAB ────────────────────────────────
+                item { SectionHeader(title = "🤖 AI Fixture Engine") }
+                item { AIFixtureEngineCard(fixtureConfig, viewModel, uiState.isGeneratingBracket) }
+            }
+            3 -> {
+                // ── MANUAL FIXTURE EDITOR TAB ────────────────────────────
+                item { SectionHeader(title = "✏️ Manual Fixture Editor") }
+                val scheduledMatches = uiState.allMatches.filter { it.status == MatchStatus.SCHEDULED }
+                if (scheduledMatches.isEmpty()) {
+                    item { EmptyState("No scheduled matches to edit") }
+                } else {
+                    items(scheduledMatches) { match ->
+                        ManualFixtureEditorCard(match = match, viewModel = viewModel)
+                    }
+                }
+            }
+            4 -> {
+                // ── REFEREE PANEL TAB ────────────────────────────────────
+                item { SectionHeader(title = "🏅 Referee Panel — Player Scorecards") }
+                if (uiState.selectedMatch != null) {
+                    item { RefereePanelHeader(uiState.selectedMatch!!, viewModel) }
+                    if (uiState.matchScorecards.isEmpty()) {
+                        item {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("No scorecards found.", style = SportFlowTheme.typography.bodyMedium, color = TextSecondary)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                PillButton(
+                                    text = "Initialize Scorecards",
+                                    onClick = { viewModel.initializeScorecards() },
+                                    icon = Icons.Filled.PlaylistAdd,
+                                    containerColor = GnitsOrange
+                                )
+                            }
+                        }
+                    } else {
+                        items(uiState.matchScorecards) { scorecard ->
+                            PlayerScorecardEditorCard(
+                                scorecard = scorecard,
+                                sportType = uiState.selectedMatch!!.sportType,
+                                onIncrementStat = { statKey, delta ->
+                                    viewModel.incrementPlayerStat(scorecard.playerId, statKey, delta)
+                                }
+                            )
+                        }
+                    }
+                } else {
+                    // Select a match first
+                    val liveMatches = uiState.allMatches.filter {
+                        it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME
+                    }
+                    if (liveMatches.isEmpty()) {
+                        item { EmptyState("No live matches. Start a match first to access the Referee Panel.") }
+                    } else {
+                        item {
+                            Text(
+                                text = "Select a live match to manage player scorecards:",
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(horizontal = 20.dp)
+                            )
+                        }
+                        items(liveMatches) { match ->
+                            SelectableMatchCard(
+                                match = match,
+                                onClick = { viewModel.selectMatchForScoring(match) }
+                            )
+                        }
+                    }
+                }
+            }
+            5 -> {
                 // ── ALL MATCHES TAB ──────────────────────────────────────
                 item { SectionHeader(title = "All GNITS Matches") }
                 if (uiState.allMatches.isEmpty()) {
@@ -210,7 +289,7 @@ fun AdminDashboardScreen(
                     }
                 }
             }
-            3 -> {
+            6 -> {
                 // ── PAYMENTS TAB ─────────────────────────────────────────
                 item { SectionHeader(title = "Pending Verifications") }
                 if (uiState.pendingPayments.isEmpty()) {
@@ -225,7 +304,7 @@ fun AdminDashboardScreen(
                     }
                 }
             }
-            4 -> {
+            7 -> {
                 // ── TOURNAMENTS TAB ──────────────────────────────────────
                 item { SectionHeader(title = "Tournament Management") }
                 items(uiState.tournaments) { tournament ->
@@ -1311,6 +1390,518 @@ private fun EmptyState(message: String) {
                 style = SportFlowTheme.typography.bodyMedium,
                 color = TextTertiary
             )
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// AI FIXTURE ENGINE CARD — Dual-Mode (Single Elimination / Round Robin)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AIFixtureEngineCard(
+    config: FixtureConfig,
+    viewModel: AdminViewModel,
+    isGenerating: Boolean
+) {
+    val sportTypes = SportType.displayList
+    val venues = GnitsVenue.allNames
+    val tournamentTypes = TournamentType.entries
+
+    var sportExpanded by remember { mutableStateOf(false) }
+    var venueExpanded by remember { mutableStateOf(false) }
+    var typeExpanded by remember { mutableStateOf(false) }
+    var teamsRawText by remember { mutableStateOf(config.teams.joinToString("\n")) }
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .animateContentSize(animationSpec = tween(300))
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            // Engine header
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = RoundedCornerShape(10.dp), color = InfoBlue.copy(alpha = 0.12f)) {
+                    Text(
+                        "🤖 AI",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = SportFlowTheme.typography.labelMedium,
+                        color = InfoBlue, fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Deterministic Scheduling Engine", style = SportFlowTheme.typography.bodyMedium, color = TextSecondary)
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Tournament Name
+            OutlinedTextField(
+                value = config.tournamentName,
+                onValueChange = { viewModel.updateFixtureConfig(config.copy(tournamentName = it)) },
+                label = { Text("Tournament Name *") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Tournament Type Dropdown
+            ExposedDropdownMenuBox(
+                expanded = typeExpanded,
+                onExpandedChange = { typeExpanded = !typeExpanded }
+            ) {
+                OutlinedTextField(
+                    value = config.tournamentType.displayName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Tournament Format *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = typeExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = typeExpanded,
+                    onDismissRequest = { typeExpanded = false }
+                ) {
+                    tournamentTypes.forEach { type ->
+                        DropdownMenuItem(
+                            text = { Text(type.displayName) },
+                            onClick = {
+                                viewModel.updateFixtureConfig(config.copy(tournamentType = type))
+                                typeExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Sport Type
+            ExposedDropdownMenuBox(
+                expanded = sportExpanded,
+                onExpandedChange = { sportExpanded = !sportExpanded }
+            ) {
+                OutlinedTextField(
+                    value = config.sportType,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Sport Type *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sportExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = sportExpanded,
+                    onDismissRequest = { sportExpanded = false }
+                ) {
+                    sportTypes.forEach { sport ->
+                        DropdownMenuItem(
+                            text = { Text(sport) },
+                            onClick = {
+                                viewModel.updateFixtureConfig(config.copy(sportType = sport))
+                                sportExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Venue
+            ExposedDropdownMenuBox(
+                expanded = venueExpanded,
+                onExpandedChange = { venueExpanded = !venueExpanded }
+            ) {
+                OutlinedTextField(
+                    value = config.venue,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Venue *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = venueExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = venueExpanded,
+                    onDismissRequest = { venueExpanded = false }
+                ) {
+                    venues.forEach { venue ->
+                        DropdownMenuItem(
+                            text = { Text(venue) },
+                            onClick = {
+                                viewModel.updateFixtureConfig(config.copy(venue = venue))
+                                venueExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Interval
+            OutlinedTextField(
+                value = config.intervalMinutes.toString(),
+                onValueChange = {
+                    val mins = it.toLongOrNull() ?: 60
+                    viewModel.updateFixtureConfig(config.copy(intervalMinutes = mins))
+                },
+                label = { Text("Interval (minutes)") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Teams — one per line
+            OutlinedTextField(
+                value = teamsRawText,
+                onValueChange = { raw ->
+                    teamsRawText = raw
+                    val teams = raw.lines().map { it.trim() }.filter { it.isNotBlank() }
+                    viewModel.updateFixtureConfig(config.copy(teams = teams))
+                },
+                label = { Text("Teams (one per line) *") },
+                modifier = Modifier.fillMaxWidth().height(160.dp),
+                shape = RoundedCornerShape(14.dp),
+                maxLines = 20,
+                placeholder = { Text("CSE XI\nIT Warriors\nECE Challengers\n...") }
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "${config.teams.size} teams entered",
+                style = SportFlowTheme.typography.bodySmall,
+                color = if (config.teams.size >= 2) SuccessGreen else TextTertiary
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            PillButton(
+                text = if (isGenerating) "Generating..." else "🤖 Generate ${config.tournamentType.displayName} Fixtures",
+                onClick = { viewModel.generateAIFixtures() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isGenerating,
+                icon = Icons.Filled.AutoFixHigh,
+                containerColor = InfoBlue
+            )
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MANUAL FIXTURE EDITOR CARD — Inline editing for each scheduled match
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManualFixtureEditorCard(
+    match: Match,
+    viewModel: AdminViewModel
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var editVenue by remember(match.id) { mutableStateOf(match.venue) }
+    var editTeamA by remember(match.id) { mutableStateOf(match.teamA) }
+    var editTeamB by remember(match.id) { mutableStateOf(match.teamB) }
+    var venueExpanded by remember { mutableStateOf(false) }
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .animateContentSize(animationSpec = tween(300))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Match header (collapsed view)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "${match.teamA} vs ${match.teamB}",
+                        style = SportFlowTheme.typography.headlineSmall,
+                        color = TextPrimary, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${match.sportType} · ${match.venue} · ${match.round.ifBlank { "No round" }}",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = TextTertiary
+                    )
+                }
+                Icon(
+                    if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    contentDescription = "Toggle edit",
+                    tint = GnitsOrange
+                )
+            }
+
+            // Expanded edit form
+            if (expanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = CardBorder)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Team A
+                OutlinedTextField(
+                    value = editTeamA,
+                    onValueChange = { editTeamA = it },
+                    label = { Text("Team A") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Team B
+                OutlinedTextField(
+                    value = editTeamB,
+                    onValueChange = { editTeamB = it },
+                    label = { Text("Team B") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Venue
+                ExposedDropdownMenuBox(
+                    expanded = venueExpanded,
+                    onExpandedChange = { venueExpanded = !venueExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = editVenue,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Venue") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = venueExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    ExposedDropdownMenu(
+                        expanded = venueExpanded,
+                        onDismissRequest = { venueExpanded = false }
+                    ) {
+                        GnitsVenue.allNames.forEach { venue ->
+                            DropdownMenuItem(
+                                text = { Text(venue) },
+                                onClick = {
+                                    editVenue = venue
+                                    venueExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Swap teams button
+                    OutlinedButton(
+                        onClick = {
+                            val tmp = editTeamA
+                            editTeamA = editTeamB
+                            editTeamB = tmp
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(24.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, WarningAmber)
+                    ) {
+                        Icon(Icons.Filled.SwapHoriz, null, tint = WarningAmber, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Swap Teams", color = WarningAmber, style = SportFlowTheme.typography.labelSmall)
+                    }
+
+                    // Save changes
+                    PillButton(
+                        text = "Save",
+                        onClick = {
+                            viewModel.applyManualEdit(
+                                ManualFixtureEdit(
+                                    matchId = match.id,
+                                    newTeamA = editTeamA.takeIf { it != match.teamA },
+                                    newTeamB = editTeamB.takeIf { it != match.teamB },
+                                    newVenue = editVenue.takeIf { it != match.venue }
+                                )
+                            )
+                            expanded = false
+                        },
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Filled.Save,
+                        containerColor = SuccessGreen
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// REFEREE PANEL HEADER — Shows selected match info
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@Composable
+private fun RefereePanelHeader(match: Match, viewModel: AdminViewModel) {
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${match.teamA} vs ${match.teamB}",
+                    style = SportFlowTheme.typography.headlineSmall,
+                    color = TextPrimary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    "${match.sportType} · ${match.venue}",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextTertiary
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PillButton(
+                    text = "Init Cards",
+                    onClick = { viewModel.initializeScorecards() },
+                    icon = Icons.Filled.PlaylistAdd,
+                    containerColor = GnitsOrange
+                )
+                TextButton(onClick = { viewModel.deselectMatch() }) {
+                    Text("✕", color = TextTertiary)
+                }
+            }
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PLAYER SCORECARD EDITOR — Sport-specific stat buttons per player
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+@Composable
+private fun PlayerScorecardEditorCard(
+    scorecard: PlayerScorecard,
+    sportType: String,
+    onIncrementStat: (statKey: String, delta: Int) -> Unit
+) {
+    val attributes = PlayerScorecardStrategy.getAttributes(sportType)
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+            .animateContentSize(animationSpec = tween(300))
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Player info header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(GnitsOrangeLight, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        scorecard.playerName.take(2).uppercase(),
+                        style = SportFlowTheme.typography.labelLarge,
+                        color = GnitsOrangeDark,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        scorecard.playerName.ifBlank { scorecard.playerId.take(8) },
+                        style = SportFlowTheme.typography.headlineSmall,
+                        color = TextPrimary
+                    )
+                    Text(
+                        "${scorecard.department} · Team ${scorecard.team.ifBlank { "—" }}",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = TextTertiary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = CardBorder)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Sport-specific stat buttons — 2 columns
+            val rows = attributes.chunked(2)
+            rows.forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { attr ->
+                        val currentValue = scorecard.sportData[attr.key]
+                        val displayVal = when (currentValue) {
+                            is Number -> currentValue.toInt().toString()
+                            is String -> currentValue
+                            else -> "0"
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { onIncrementStat(attr.key, 1) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = GnitsOrangeLight,
+                            border = androidx.compose.foundation.BorderStroke(1.dp, GnitsOrange.copy(alpha = 0.2f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(attr.emoji, style = SportFlowTheme.typography.bodyMedium)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        attr.label,
+                                        style = SportFlowTheme.typography.labelSmall,
+                                        color = TextSecondary,
+                                        maxLines = 1
+                                    )
+                                    Text(
+                                        displayVal,
+                                        style = SportFlowTheme.typography.headlineSmall,
+                                        color = GnitsOrangeDark,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Icon(
+                                    Icons.Filled.Add,
+                                    contentDescription = "+1",
+                                    tint = GnitsOrange,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                    // Fill last row if odd number of items
+                    if (row.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+            }
         }
     }
 }

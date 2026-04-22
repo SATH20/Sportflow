@@ -31,6 +31,7 @@ class SportFlowRepository @Inject constructor(
         const val USERS_COLLECTION       = "gnits_users"
         const val PAYMENTS_COLLECTION    = "gnits_payments"
         const val REGISTRATIONS_COLLECTION = "registrations" // sub-collection under gnits_matches
+        const val SCORECARDS_COLLECTION  = "scorecards"      // sub-collection under gnits_matches
         const val NOTIFICATION_TRIGGERS  = "gnits_notification_triggers"
 
         // FCM topics — must match what Cloud Functions publishes to
@@ -682,11 +683,15 @@ class SportFlowRepository @Inject constructor(
 
     /**
      * Atomically registers the current user for a match.
-     * - Writes a Registration doc to gnits_matches/{matchId}/registrations
-     * - Increments the denormalized registrationCount on the match doc
-     * - Triggers a push notification to the user's department topic
+     * Guards:
+     *  - Already registered check
+     *  - Squad full check  (maxSquadSize, denormalized via currentSquadCount)
+     *  - Department eligibility check (Match.allowedDepartments)
+     *  - Academic year eligibility check (Match.allowedYears)
+     * After a successful write:
+     *  - Scenario B: if the new count == maxSquadSize, broadcasts "Squad Closed" FCM trigger
      * @throws IllegalStateException if user is not authenticated
-     * @throws IllegalArgumentException if the event is full or already registered
+     * @throws IllegalArgumentException on any eligibility or capacity violation
      */
     suspend fun registerForMatch(match: com.sportflow.app.data.model.Match) {
         val user = auth.currentUser
@@ -696,26 +701,61 @@ class SportFlowRepository @Inject constructor(
         val regRef    = matchRef.collection(REGISTRATIONS_COLLECTION).document(user.uid)
         val userRef   = firestore.collection(USERS_COLLECTION).document(user.uid)
 
+        // Snapshot needed before transaction for eligibility data
+        val userSnap = userRef.get().await()
+        val userDept = userSnap.getString("department") ?: ""
+        val userYear = userSnap.getString("yearOfStudy") ?: ""
+
+        // ── Eligibility checks (outside transaction — read-only) ────────────
+        if (match.allowedDepartments.isNotEmpty() &&
+            userDept.isNotBlank() &&
+            match.allowedDepartments.none { it.equals(userDept, ignoreCase = true) }
+        ) {
+            val allowed = match.allowedDepartments.joinToString(", ")
+            throw IllegalArgumentException(
+                "You are not eligible: only $allowed department(s) may register for this event"
+            )
+        }
+
+        if (match.allowedYears.isNotEmpty() &&
+            userYear.isNotBlank() &&
+            match.allowedYears.none { it.equals(userYear, ignoreCase = true) }
+        ) {
+            val allowed = match.allowedYears
+                .mapNotNull { com.sportflow.app.data.model.GnitsYear.fromCode(it)?.displayName }
+                .joinToString(", ")
+            throw IllegalArgumentException(
+                "You are not eligible: only $allowed student(s) may register for this event"
+            )
+        }
+
+        // ── Transactional write ─────────────────────────────────────────────
+        var newSquadCount = 0
         firestore.runTransaction { tx ->
             val matchSnap = tx.get(matchRef)
             val regSnap   = tx.get(regRef)
-            val userSnap  = tx.get(userRef)
 
             // Guard: already registered
             if (regSnap.exists()) {
                 throw IllegalArgumentException("Already registered for this event")
             }
 
-            // Guard: event full (maxRegistrations == 0 means unlimited)
-            val maxReg  = matchSnap.getLong("maxRegistrations")?.toInt() ?: 0
-            val curCount = matchSnap.getLong("registrationCount")?.toInt() ?: 0
-            if (maxReg > 0 && curCount >= maxReg) {
-                throw IllegalArgumentException("Event is full (${maxReg} max registrations)")
+            // Guard: squad full — prefer maxSquadSize / currentSquadCount;
+            //        fall back to legacy maxRegistrations / registrationCount
+            val maxSquad  = matchSnap.getLong("maxSquadSize")?.toInt() ?: 0
+            val curSquad  = matchSnap.getLong("currentSquadCount")?.toInt() ?: 0
+            val maxReg    = matchSnap.getLong("maxRegistrations")?.toInt() ?: 0
+            val curCount  = matchSnap.getLong("registrationCount")?.toInt() ?: 0
+
+            val effectiveMax = if (maxSquad > 0) maxSquad else maxReg
+            val effectiveCur = if (maxSquad > 0) curSquad else curCount
+
+            if (effectiveMax > 0 && effectiveCur >= effectiveMax) {
+                throw IllegalArgumentException("Squad is full ($effectiveMax/${effectiveMax} slots taken)")
             }
 
-            val userName    = userSnap.getString("displayName") ?: user.displayName ?: ""
-            val department  = userSnap.getString("department") ?: ""
-            val rollNumber  = userSnap.getString("rollNumber") ?: ""
+            val userName   = userSnap.getString("displayName") ?: user.displayName ?: ""
+            val rollNumber = userSnap.getString("rollNumber") ?: ""
 
             val registration = hashMapOf(
                 "id"           to user.uid,
@@ -723,22 +763,28 @@ class SportFlowRepository @Inject constructor(
                 "matchId"      to match.id,
                 "tournamentId" to match.tournamentId,
                 "userName"     to userName,
-                "department"   to department,
+                "department"   to userDept,
+                "yearOfStudy"  to userYear,              // persist for eligibility audit trail
                 "rollNumber"   to rollNumber,
                 "status"       to com.sportflow.app.data.model.RegistrationStatus.CONFIRMED.name,
                 "registeredAt" to com.google.firebase.Timestamp.now()
             )
 
             tx.set(regRef, registration)
+            // Increment both counters so dashboards and slot-checks stay in sync
+            tx.update(matchRef, "currentSquadCount",
+                com.google.firebase.firestore.FieldValue.increment(1))
             tx.update(matchRef, "registrationCount",
                 com.google.firebase.firestore.FieldValue.increment(1))
+
+            newSquadCount = effectiveCur + 1
         }.await()
 
-        // Non-critical: push notification trigger
-        val dept = try {
-            firestore.collection(USERS_COLLECTION).document(user.uid)
-                .get().await().getString("department") ?: ""
-        } catch (_: Exception) { "" }
+        // ── Non-critical notifications ──────────────────────────────────
+        val dept = userDept.ifBlank {
+            try { firestore.collection(USERS_COLLECTION).document(user.uid)
+                .get().await().getString("department") ?: "" } catch (_: Exception) { "" }
+        }
 
         pushNotificationTrigger(
             type    = "registration_success",
@@ -747,12 +793,26 @@ class SportFlowRepository @Inject constructor(
             matchId = match.id,
             topic   = if (dept.isNotBlank()) "dept_$dept" else FCM_TOPIC_ALL
         )
+
+        // Scenario B: squad just became full — broadcast closure alert
+        val maxSquadFinal = match.maxSquadSize.takeIf { it > 0 } ?: match.maxRegistrations
+        if (maxSquadFinal > 0 && newSquadCount >= maxSquadFinal) {
+            val matchName = "${match.teamA} vs ${match.teamB}"
+            pushNotificationTrigger(
+                type    = "squad_closed",
+                title   = "🚫 Squad Full — ${match.sportType}",
+                body    = "Registrations for $matchName are now closed. The squad is full!",
+                matchId = match.id,
+                topic   = FCM_TOPIC_ALL
+            )
+        }
     }
 
     /**
      * Cancel an existing registration.
      * - Deletes the registration doc
-     * - Decrements the registrationCount on the match doc (floor 0)
+     * - Decrements currentSquadCount (and registrationCount) on the match doc (floor 0)
+     * - Scenario A: if the squad was previously full, broadcasts "spot opened" FCM trigger
      */
     suspend fun cancelRegistration(matchId: String) {
         val user = auth.currentUser
@@ -761,16 +821,47 @@ class SportFlowRepository @Inject constructor(
         val matchRef = firestore.collection(MATCHES_COLLECTION).document(matchId)
         val regRef   = matchRef.collection(REGISTRATIONS_COLLECTION).document(user.uid)
 
+        var previousCount  = 0
+        var maxSquadSize   = 0
+        var matchName      = ""
+        var sportType      = ""
+
+        // Read match metadata before transaction
+        val matchSnap = matchRef.get().await()
+        previousCount = (matchSnap.getLong("currentSquadCount")?.toInt()
+            ?: matchSnap.getLong("registrationCount")?.toInt() ?: 0)
+        maxSquadSize  = (matchSnap.getLong("maxSquadSize")?.toInt()
+            ?: matchSnap.getLong("maxRegistrations")?.toInt() ?: 0)
+        matchName     = "${matchSnap.getString("teamA") ?: ""} vs ${matchSnap.getString("teamB") ?: ""}"
+        sportType     = matchSnap.getString("sportType") ?: ""
+        val venue     = matchSnap.getString("venue") ?: "GNITS"
+
         firestore.runTransaction { tx ->
-            val matchSnap = tx.get(matchRef)
-            val curCount  = matchSnap.getLong("registrationCount")?.toInt() ?: 0
+            val snap     = tx.get(matchRef)
+            val curSquad = snap.getLong("currentSquadCount")?.toInt() ?: 0
+            val curReg   = snap.getLong("registrationCount")?.toInt() ?: 0
 
             tx.delete(regRef)
-            if (curCount > 0) {
+            if (curSquad > 0) {
+                tx.update(matchRef, "currentSquadCount",
+                    com.google.firebase.firestore.FieldValue.increment(-1))
+            }
+            if (curReg > 0) {
                 tx.update(matchRef, "registrationCount",
                     com.google.firebase.firestore.FieldValue.increment(-1))
             }
         }.await()
+
+        // Scenario A: a spot has just opened up in a previously-full squad
+        if (maxSquadSize > 0 && previousCount >= maxSquadSize) {
+            pushNotificationTrigger(
+                type    = "spot_opened",
+                title   = "\uD83D\uDFE2 Spot Available \u2014 $sportType",
+                body    = "A spot has opened up in $matchName at $venue \u2014 register now!",
+                matchId = matchId,
+                topic   = FCM_TOPIC_ALL
+            )
+        }
     }
 
     /**
@@ -786,6 +877,75 @@ class SportFlowRepository @Inject constructor(
             .get()
             .await()
         return if (snap.exists()) snap.toObject(com.sportflow.app.data.model.Registration::class.java) else null
+    }
+
+    /**
+     * Real-time Flow<Boolean> — true if the current user has an active registration
+     * document for [matchId], false otherwise.
+     *
+     * This is the SINGLE SOURCE OF TRUTH for Home Screen button state.
+     * When a registration is deleted (cancel), this emits `false` instantly,
+     * causing the Home Screen button to flip back to "Register" with zero delay.
+     */
+    fun observeRegistrationStatus(matchId: String): Flow<Boolean> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(false)
+            close()
+            return@callbackFlow
+        }
+        val regDocRef = firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(REGISTRATIONS_COLLECTION)
+            .document(uid)
+        val listener = regDocRef.addSnapshotListener { snapshot, error ->
+            if (error != null) {
+                trySend(false)
+                return@addSnapshotListener
+            }
+            trySend(snapshot?.exists() == true)
+        }
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Real-time Flow<Set<String>> — emits the full set of matchIds the current
+     * user is registered for. Used by RegistrationViewModel to keep a live
+     * registry of registration state that is shared across Home and My Matches.
+     *
+     * Listens to the collectionGroup snapshot so any external deletion (e.g.
+     * admin removes a registration) is also reflected immediately.
+     */
+    fun observeMyRegisteredMatchIds(): Flow<Set<String>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptySet())
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collectionGroup(REGISTRATIONS_COLLECTION)
+            .whereEqualTo("uid", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptySet())
+                    return@addSnapshotListener
+                }
+                val ids = snapshot?.documents
+                    ?.mapNotNull { it.getString("matchId") }
+                    ?.toSet() ?: emptySet()
+                trySend(ids)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Fetch the full SportUser profile for the current user (one-shot, not reactive).
+     * Used during eligibility pre-checks inside the registration ViewModel.
+     */
+    suspend fun getCurrentUserProfile(): com.sportflow.app.data.model.SportUser? {
+        val uid = auth.currentUser?.uid ?: return null
+        val snap = firestore.collection(USERS_COLLECTION).document(uid).get().await()
+        return snap.toObject(com.sportflow.app.data.model.SportUser::class.java)
     }
 
     /**
@@ -834,5 +994,166 @@ class SportFlowRepository @Inject constructor(
                     .addOnFailureListener { /* best-effort */ }
             }
         awaitClose { listener.remove() }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MANUAL FIXTURE EDITING — Admin override for drag-and-drop changes
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /**
+     * Apply a manual fixture edit from the Admin Dashboard.
+     * Only non-null fields in [edit] are updated in Firestore.
+     * The snapshot listener on getAllMatches() triggers an immediate StateFlow
+     * update across all student devices (Home Screen re-sorts "Upcoming Matches").
+     */
+    suspend fun applyManualFixtureEdit(edit: com.sportflow.app.data.model.ManualFixtureEdit) {
+        val updates = mutableMapOf<String, Any>()
+        edit.newScheduledTime?.let { updates["scheduledTime"] = it }
+        edit.newVenue?.let { updates["venue"] = it }
+        edit.newTeamA?.let { updates["teamA"] = it }
+        edit.newTeamB?.let { updates["teamB"] = it }
+        edit.newTeamADepartment?.let { updates["teamADepartment"] = it }
+        edit.newTeamBDepartment?.let { updates["teamBDepartment"] = it }
+
+        if (updates.isNotEmpty()) {
+            firestore.collection(MATCHES_COLLECTION)
+                .document(edit.matchId)
+                .update(updates)
+                .await()
+        }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PLAYER SCORECARDS — Sport-Specific Personal Performance
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+    /**
+     * Real-time flow of all player scorecards for a specific match.
+     * Used by the Admin Referee Panel to see all registered players' stats.
+     */
+    fun getScorecardsForMatch(matchId: String): Flow<List<com.sportflow.app.data.model.PlayerScorecard>> = callbackFlow {
+        val listener = firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(SCORECARDS_COLLECTION)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val scorecards = snapshot?.documents?.mapNotNull { doc ->
+                    doc.toObject(com.sportflow.app.data.model.PlayerScorecard::class.java)
+                        ?.copy(id = doc.id)
+                } ?: emptyList()
+                trySend(scorecards)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Get the current player's personal scorecard for a specific match.
+     * Used by the "Personal Performance" tab in My Matches details.
+     */
+    fun getMyScorecard(matchId: String): Flow<com.sportflow.app.data.model.PlayerScorecard?> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(null)
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(SCORECARDS_COLLECTION)
+            .document(uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(null)
+                    return@addSnapshotListener
+                }
+                val scorecard = snapshot?.toObject(com.sportflow.app.data.model.PlayerScorecard::class.java)
+                    ?.copy(id = snapshot.id)
+                trySend(scorecard)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Create or update a player's scorecard for a match.
+     * Called when Admin initializes scorecards for registered players,
+     * or when updating stats via the Referee Panel.
+     */
+    suspend fun upsertPlayerScorecard(scorecard: com.sportflow.app.data.model.PlayerScorecard) {
+        val docRef = firestore.collection(MATCHES_COLLECTION)
+            .document(scorecard.matchId)
+            .collection(SCORECARDS_COLLECTION)
+            .document(scorecard.playerId)
+        docRef.set(scorecard.copy(
+            updatedAt = com.google.firebase.Timestamp.now()
+        )).await()
+    }
+
+    /**
+     * Increment a specific stat field in a player's scorecard.
+     * Used by the Admin Referee Panel for live stat updates.
+     *
+     * @param matchId   Match document ID
+     * @param playerId  Player (user) document ID  
+     * @param statKey   Key in the sportData map, e.g. "runsScored", "aces"
+     * @param delta     Amount to increment (default 1)
+     */
+    suspend fun incrementScorecardStat(
+        matchId: String,
+        playerId: String,
+        statKey: String,
+        delta: Int = 1
+    ) {
+        val docRef = firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(SCORECARDS_COLLECTION)
+            .document(playerId)
+
+        firestore.runTransaction { tx ->
+            val snap = tx.get(docRef)
+            if (snap.exists()) {
+                @Suppress("UNCHECKED_CAST")
+                val currentData = (snap.get("sportData") as? Map<String, Any>) ?: emptyMap()
+                val currentVal = (currentData[statKey] as? Number)?.toInt() ?: 0
+                val updatedData = currentData.toMutableMap()
+                updatedData[statKey] = currentVal + delta
+                tx.update(docRef, mapOf(
+                    "sportData" to updatedData,
+                    "updatedAt" to com.google.firebase.Timestamp.now()
+                ))
+            }
+        }.await()
+    }
+
+    /**
+     * Initialize scorecards for all registered players in a match.
+     * Called by Admin when starting a match — creates blank scorecards
+     * with sport-appropriate default values for each registered player.
+     */
+    suspend fun initializeScorecardsForMatch(matchId: String, sportType: String) {
+        val registrations = firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(REGISTRATIONS_COLLECTION)
+            .get()
+            .await()
+
+        val defaultData = com.sportflow.app.data.model.PlayerScorecardStrategy.createDefault(sportType)
+
+        for (regDoc in registrations.documents) {
+            val reg = regDoc.toObject(com.sportflow.app.data.model.Registration::class.java) ?: continue
+            val scorecard = com.sportflow.app.data.model.PlayerScorecard(
+                matchId = matchId,
+                playerId = reg.uid,
+                playerName = reg.userName,
+                department = reg.department,
+                team = "",  // Will be assigned by admin or auto-detected
+                sportType = sportType,
+                sportData = defaultData
+            )
+            upsertPlayerScorecard(scorecard)
+        }
     }
 }
