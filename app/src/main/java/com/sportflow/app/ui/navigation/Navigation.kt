@@ -155,7 +155,7 @@ fun SportFlowNavHost() {
 
             // ── Home (both roles) ─────────────────────────────────────────
             composable(Screen.Home.route) {
-                HomeFeedScreen(
+                com.sportflow.app.ui.screens.home.HomeFeedScreenComplete(
                     navController = navController,
                     currentUser   = authState.currentUser,
                     isAdmin       = isAdmin
@@ -171,7 +171,7 @@ fun SportFlowNavHost() {
             // Physically absent (composable not registered) for ADMIN sessions.
             if (!isAdmin) {
                 composable(Screen.MyMatches.route) {
-                    MyMatchesScreen(
+                    com.sportflow.app.ui.screens.home.MyMatchesScreenComplete(
                         navController   = navController,
                         currentUserRole = authState.userRole ?: UserRole.PLAYER
                     )
@@ -213,6 +213,11 @@ fun SportFlowNavHost() {
             if (isAdmin) {
                 composable(Screen.Admin.route) {
                     AdminDashboardScreen(navController = navController)
+                }
+                
+                // Admin Approval Screen
+                composable("admin/approvals") {
+                    com.sportflow.app.ui.screens.admin.AdminApprovalScreen()
                 }
             }
         }

@@ -29,6 +29,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.sportflow.app.data.model.GnitsDepartment
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AuthViewModel
@@ -46,6 +47,7 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var rollNumber by remember { mutableStateOf("") }
+    var selectedDepartment by remember { mutableStateOf("") }
     var isSignUp by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
 
@@ -152,14 +154,57 @@ fun LoginScreen(
                         Spacer(modifier = Modifier.height(14.dp))
 
                         // Roll Number
-                        AuthTextField(
+                        OutlinedTextField(
                             value = rollNumber,
                             onValueChange = { rollNumber = it },
-                            label = "Roll Number",
-                            icon = Icons.Outlined.Badge,
-                            imeAction = ImeAction.Next,
-                            onImeAction = { focusManager.moveFocus(FocusDirection.Down) }
+                            label = { Text("Roll Number") },
+                            leadingIcon = { Icon(Icons.Outlined.Badge, contentDescription = null) },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = GnitsOrange,
+                                focusedLabelColor = GnitsOrange,
+                                cursorColor = GnitsOrange
+                            )
                         )
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Department dropdown
+                        var departmentExpanded by remember { mutableStateOf(false) }
+                        ExposedDropdownMenuBox(
+                            expanded = departmentExpanded,
+                            onExpandedChange = { departmentExpanded = it }
+                        ) {
+                            OutlinedTextField(
+                                value = GnitsDepartment.entries.find { it.name == selectedDepartment }?.displayName ?: "",
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Department") },
+                                leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .menuAnchor(),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = GnitsOrange,
+                                    focusedLabelColor = GnitsOrange
+                                )
+                            )
+                            ExposedDropdownMenu(
+                                expanded = departmentExpanded,
+                                onDismissRequest = { departmentExpanded = false }
+                            ) {
+                                GnitsDepartment.entries.forEach { dept ->
+                                    DropdownMenuItem(
+                                        text = { Text(dept.displayName) },
+                                        onClick = {
+                                            selectedDepartment = dept.name
+                                            departmentExpanded = false
+                                        }
+                                    )
+                                }
+                            }
+                        }
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
@@ -212,11 +257,12 @@ fun LoginScreen(
                         else if (isSignUp) "Create Account"
                         else "Sign In",
                         onClick = {
-                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, "")
+                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
                             else viewModel.signIn(email, password)
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !uiState.isLoading && email.isNotBlank() && password.isNotBlank(),
+                        enabled = !uiState.isLoading && email.isNotBlank() && password.isNotBlank() &&
+                                (!isSignUp || (name.isNotBlank() && rollNumber.isNotBlank() && selectedDepartment.isNotBlank())),
                         icon = if (isSignUp) Icons.Filled.PersonAdd else Icons.Filled.Login
                     )
 

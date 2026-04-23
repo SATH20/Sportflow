@@ -202,6 +202,7 @@ class AdvancedRegistrationViewModel @Inject constructor(
                         "matchId"      to matchId,
                         "tournamentId" to match.tournamentId,
                         "userName"     to userProfile!!.displayName,
+                        "email"        to (currentUser.email ?: ""),  // Added for admin detail view
                         "department"   to userProfile!!.department,
                         "yearOfStudy"  to userProfile!!.yearOfStudy,
                         "rollNumber"   to userProfile!!.rollNumber,
@@ -325,30 +326,43 @@ class AdvancedRegistrationViewModel @Inject constructor(
         }
     }
 
+    /** Keyed snapshot listeners so they can be removed in onCleared() */
+    private val squadListeners = mutableMapOf<String, com.google.firebase.firestore.ListenerRegistration>()
+
     /**
-     * Subscribe to real-time squad count updates for a match
+     * Subscribe to real-time squad count updates for a match.
+     * Listener is stored and removed when ViewModel is cleared.
      */
     fun subscribeToSquadUpdates(matchId: String) {
-        viewModelScope.launch {
-            firestore.collection("gnits_matches")
-                .document(matchId)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null || snapshot == null) return@addSnapshotListener
-                    
-                    val currentCount = snapshot.getLong("currentSquadCount")?.toInt() ?: 0
-                    val maxSquads = snapshot.getLong("maxSquadSize")?.toInt() ?: 0
-                    
-                    _uiState.update {
-                        it.copy(
-                            squadCountMap = it.squadCountMap + (matchId to currentCount),
-                            maxSquadsMap = it.maxSquadsMap + (matchId to maxSquads)
-                        )
-                    }
+        // Guard: don't attach duplicate listeners
+        if (squadListeners.containsKey(matchId)) return
+
+        val listener = firestore.collection("gnits_matches")
+            .document(matchId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+
+                val currentCount = snapshot.getLong("currentSquadCount")?.toInt() ?: 0
+                val maxSquads = snapshot.getLong("maxSquadSize")?.toInt() ?: 0
+
+                _uiState.update {
+                    it.copy(
+                        squadCountMap = it.squadCountMap + (matchId to currentCount),
+                        maxSquadsMap = it.maxSquadsMap + (matchId to maxSquads)
+                    )
                 }
-        }
+            }
+        squadListeners[matchId] = listener
     }
 
     fun clearMessage() {
         _uiState.update { it.copy(successMessage = null, error = null) }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Remove all active Firestore snapshot listeners to prevent memory leaks
+        squadListeners.values.forEach { it.remove() }
+        squadListeners.clear()
     }
 }

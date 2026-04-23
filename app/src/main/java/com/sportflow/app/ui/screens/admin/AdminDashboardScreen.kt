@@ -16,6 +16,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,6 +44,9 @@ fun AdminDashboardScreen(
     val fixtureConfig by viewModel.fixtureConfig.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    // Hoisted here (not inside LazyListScope) so rememberSaveable has a valid @Composable context
+    var selectedReg by rememberSaveable { mutableStateOf<String?>(null) }
+    var regFilter by rememberSaveable { mutableStateOf("ALL") }
     val tabs = listOf(
         "Create Match", "Live Scoring", "AI Fixtures",
         "Manual Editor", "Referee Panel",
@@ -342,30 +346,74 @@ fun AdminDashboardScreen(
             }
             8 -> {
                 // ── REGISTRATIONS TAB (Admin Data Bridge) ───────────────────
+                // selectedReg and regFilter are hoisted to the parent Composable scope
+
                 item {
                     SectionHeader(
                         title = "Student Registrations",
-                        actionText = if (uiState.newRegistrationCount > 0) "Mark all seen" else null,
+                        actionText = if (uiState.newRegistrationCount > 0) "Mark All Seen" else null,
                         onAction = { viewModel.markAllRegistrationsSeen() }
                     )
                 }
-                if (uiState.selectedRegistration != null) {
-                    item {
-                        RegistrationDetailCard(
-                            registration = uiState.selectedRegistration!!,
-                            onDismiss = { viewModel.deselectRegistration() }
-                        )
+
+                // Filter chips
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("ALL", "CONFIRMED", "PENDING").forEach { filter ->
+                            FilterChip(
+                                selected = regFilter == filter,
+                                onClick = { regFilter = filter },
+                                label = { Text(filter.lowercase().replaceFirstChar { it.uppercase() }) },
+                                leadingIcon = if (regFilter == filter) {
+                                    { Icon(Icons.Filled.Check, null, Modifier.size(16.dp)) }
+                                } else null
+                            )
+                        }
                     }
-                } else if (uiState.registrations.isEmpty()) {
-                    item { EmptyState("No registrations yet") }
+                }
+
+                // Show detail card if a registration is selected
+                if (selectedReg != null) {
+                    val reg = uiState.registrations.find { it.id == selectedReg }
+                    if (reg != null) {
+                        item {
+                            RegistrationDetailCard(
+                                registration = reg,
+                                onDismiss = { selectedReg = null }
+                            )
+                        }
+                    }
+                }
+
+                val filteredRegs = when (regFilter) {
+                    "CONFIRMED" -> uiState.registrations.filter {
+                        it.status == com.sportflow.app.data.model.RegistrationStatus.CONFIRMED
+                    }
+                    "PENDING"   -> uiState.registrations.filter {
+                        it.status == com.sportflow.app.data.model.RegistrationStatus.PENDING
+                    }
+                    else        -> uiState.registrations
+                }
+
+                if (filteredRegs.isEmpty()) {
+                    item { EmptyState("No registrations found") }
                 } else {
-                    items(uiState.registrations) { reg ->
+                    items(filteredRegs, key = { it.id }) { reg ->
                         AdminRegistrationCard(
                             registration = reg,
-                            onClick = { viewModel.selectRegistration(reg) }
+                            onClick = {
+                                viewModel.markRegistrationAsSeen(reg.id)
+                                selectedReg = if (selectedReg == reg.id) null else reg.id
+                            }
                         )
                     }
                 }
+
             }
         }
     }

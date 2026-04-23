@@ -836,6 +836,42 @@ class AdminViewModel @Inject constructor(
             repository.markAllRegistrationsSeen()
         }
     }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ADMIN APPROVAL SYSTEM
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fun acceptRegistration(registrationId: String) {
+        viewModelScope.launch {
+            try {
+                repository.acceptRegistration(registrationId)
+                _uiState.update { it.copy(successMessage = "✅ Registration accepted") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    fun denyRegistration(registrationId: String, reason: String) {
+        viewModelScope.launch {
+            try {
+                repository.denyRegistration(registrationId, reason)
+                _uiState.update { it.copy(successMessage = "❌ Registration denied") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
+    fun markRegistrationAsSeen(registrationId: String) {
+        viewModelScope.launch {
+            try {
+                repository.markRegistrationAsSeen(registrationId)
+            } catch (_: Exception) {
+                // Non-critical
+            }
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -897,6 +933,9 @@ class MyMatchesViewModel @Inject constructor(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 data class RegistrationUiState(
+    val isLoading: Boolean = false,
+    val error: String? = null,
+    val successMessage: String? = null,
     /**
      * Live set of matchIds for which the current user has an active registration.
      * Backed by a real-time Firestore collectionGroup snapshot — any external
@@ -905,159 +944,9 @@ data class RegistrationUiState(
     val registeredMatchIds: Set<String> = emptySet(),
     /** matchId → actively processing (button shows spinner) */
     val loadingMatchIds: Set<String> = emptySet(),
-    /** Non-null while a snackbar message should be shown */
-    val successMessage: String? = null,
-    val error: String? = null
+    /** Current user profile for pre-filling registration forms */
+    val currentUser: com.sportflow.app.data.model.SportUser? = null
 )
-
-@HiltViewModel
-class RegistrationViewModel @Inject constructor(
-    private val repository: SportFlowRepository
-) : ViewModel() {
-
-    private val _uiState = MutableStateFlow(RegistrationUiState())
-    val uiState: StateFlow<RegistrationUiState> = _uiState.asStateFlow()
-
-    // ── Single Source of Truth — live Firestore snapshot ────────────────────
-    init {
-        observeRegistrations()
-    }
-
-    /**
-     * Subscribe to all registration docs for the current user.
-     * Any add or delete in Firestore automatically updates [registeredMatchIds],
-     * so the Home Screen button state stays in sync without any manual refresh.
-     */
-    private fun observeRegistrations() {
-        viewModelScope.launch {
-            repository.observeMyRegisteredMatchIds()
-                .collect { ids ->
-                    _uiState.update { it.copy(registeredMatchIds = ids) }
-                }
-        }
-    }
-
-    /**
-     * Re-initialise the live stream (e.g. after sign-in / sign-out).
-     * Call from the auth flow when a new user session starts.
-     */
-    fun refreshStream() {
-        observeRegistrations()
-    }
-
-    // ── RBAC guard ──────────────────────────────────────────────────────────
-
-    /**
-     * PLAYER-ONLY: Register for a match.
-     * Admins are physically blocked — this returns immediately with an error.
-     *
-     * Eligibility pre-check is performed against the live user profile
-     * before touching Firestore, giving instant UI feedback.
-     */
-    fun register(match: Match, currentUserRole: com.sportflow.app.data.model.UserRole) {
-        // ── RBAC: Admins CANNOT register as participants ────────────────────
-        if (currentUserRole == com.sportflow.app.data.model.UserRole.ADMIN) {
-            _uiState.update {
-                it.copy(error = "Admins are not permitted to register as match participants")
-            }
-            return
-        }
-
-        val matchId = match.id
-        viewModelScope.launch {
-            _uiState.update { it.copy(loadingMatchIds = it.loadingMatchIds + matchId, error = null) }
-            try {
-                // ── Eligibility pre-check (fast, before Firestore transaction) ──
-                val profile = repository.getCurrentUserProfile()
-                if (profile != null) {
-                    val dept = profile.department
-                    val year = profile.yearOfStudy
-
-                    if (match.allowedDepartments.isNotEmpty() &&
-                        dept.isNotBlank() &&
-                        match.allowedDepartments.none { it.equals(dept, ignoreCase = true) }
-                    ) {
-                        val allowed = match.allowedDepartments.joinToString(", ")
-                        throw IllegalArgumentException(
-                            "⚠️ Not eligible: only $allowed department(s) may register"
-                        )
-                    }
-                    if (match.allowedYears.isNotEmpty() &&
-                        year.isNotBlank() &&
-                        match.allowedYears.none { it.equals(year, ignoreCase = true) }
-                    ) {
-                        val allowed = match.allowedYears
-                            .mapNotNull { com.sportflow.app.data.model.GnitsYear.fromCode(it)?.displayName }
-                            .joinToString(", ")
-                        throw IllegalArgumentException(
-                            "⚠️ Not eligible: open to $allowed students only"
-                        )
-                    }
-                }
-
-                repository.registerForMatch(match)
-                // registeredMatchIds is updated reactively via the live stream —
-                // no manual update needed here.
-                _uiState.update {
-                    it.copy(
-                        loadingMatchIds = it.loadingMatchIds - matchId,
-                        successMessage  = "🎫 Registered for ${match.teamA} vs ${match.teamB}!"
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        loadingMatchIds = it.loadingMatchIds - matchId,
-                        error           = e.message ?: "Registration failed"
-                    )
-                }
-            }
-        }
-    }
-
-    /**
-     * PLAYER-ONLY: Cancel an existing registration (atomic transaction).
-     * Admins are physically blocked.
-     * Firestore transaction deletes the reg doc and decrements currentSquadCount.
-     * The live snapshot stream handles updating [registeredMatchIds] instantly.
-     */
-    fun cancelRegistration(
-        matchId: String,
-        currentUserRole: com.sportflow.app.data.model.UserRole
-    ) {
-        if (currentUserRole == com.sportflow.app.data.model.UserRole.ADMIN) {
-            _uiState.update {
-                it.copy(error = "Admins cannot cancel participant registrations from this screen")
-            }
-            return
-        }
-
-        viewModelScope.launch {
-            _uiState.update { it.copy(loadingMatchIds = it.loadingMatchIds + matchId, error = null) }
-            try {
-                repository.cancelRegistration(matchId)
-                // registeredMatchIds updated reactively — no manual update needed.
-                _uiState.update {
-                    it.copy(
-                        loadingMatchIds = it.loadingMatchIds - matchId,
-                        successMessage  = "✅ Registration cancelled successfully"
-                    )
-                }
-            } catch (e: Exception) {
-                _uiState.update {
-                    it.copy(
-                        loadingMatchIds = it.loadingMatchIds - matchId,
-                        error           = e.message ?: "Failed to cancel registration"
-                    )
-                }
-            }
-        }
-    }
-
-    fun clearMessage() {
-        _uiState.update { it.copy(successMessage = null, error = null) }
-    }
-}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SCORECARD VIEWMODEL — Player's personal performance across matches
@@ -1106,73 +995,6 @@ class ScorecardViewModel @Inject constructor(
     }
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// NOTIFICATION VIEWMODEL — Bell badge + Notification Center
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-data class NotificationUiState(
-    /** Count of unseen notifications — drives the bell icon badge */
-    val unseenCount: Int = 0,
-    /** Full notification list for Notification Center dialog */
-    val notifications: List<com.sportflow.app.data.model.NotificationItem> = emptyList(),
-    /** Whether the notification center dialog is showing */
-    val showDialog: Boolean = false,
-    val isLoading: Boolean = false
-)
-
-@HiltViewModel
-class NotificationViewModel @Inject constructor(
-    private val repository: SportFlowRepository
-) : ViewModel() {
-
-    private val _uiState = MutableStateFlow(NotificationUiState())
-    val uiState: StateFlow<NotificationUiState> = _uiState.asStateFlow()
-
-    init {
-        observeUnseenCount()
-        observeNotifications()
-    }
-
-    private fun observeUnseenCount() {
-        viewModelScope.launch {
-            repository.observeUnseenNotificationCount().collect { count ->
-                _uiState.update { it.copy(unseenCount = count) }
-            }
-        }
-    }
-
-    private fun observeNotifications() {
-        viewModelScope.launch {
-            repository.observeNotifications().collect { notifications ->
-                _uiState.update { it.copy(notifications = notifications, isLoading = false) }
-            }
-        }
-    }
-
-    /** Open notification center dialog — marks lastCheckedTimestamp */
-    fun openNotificationCenter() {
-        _uiState.update { it.copy(showDialog = true) }
-        viewModelScope.launch {
-            repository.updateLastCheckedTimestamp()
-        }
-    }
-
-    /** Close notification center dialog */
-    fun closeNotificationCenter() {
-        _uiState.update { it.copy(showDialog = false) }
-    }
-
-    /** Mark a single notification as seen */
-    fun markSeen(notificationId: String) {
-        viewModelScope.launch {
-            repository.markNotificationSeen(notificationId)
-        }
-    }
-
-    /** Mark all notifications as seen (clear badge) */
-    fun markAllSeen() {
-        viewModelScope.launch {
-            repository.markAllNotificationsSeen()
-        }
-    }
-}
+// NOTE: NotificationUiState is defined in NotificationViewModel.kt.
+// It is not re-declared here to avoid duplicate class compilation errors.

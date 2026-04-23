@@ -409,12 +409,15 @@ data class Registration(
     val matchId: String = "",
     val tournamentId: String = "",
     val userName: String = "",
+    val email: String = "",             // Student email — populated from FirebaseAuth
     val department: String = "",
     val yearOfStudy: String = "",        // GnitsYear code e.g. "SECOND_YEAR"
     val rollNumber: String = "",
     val status: RegistrationStatus = RegistrationStatus.CONFIRMED,
     val registeredAt: Timestamp? = null,
-    
+    /** Admin "New Entry" badge flag — false until admin views this registration */
+    val seen: Boolean = false,
+
     // ── Advanced Squad Registration Fields ────────────────────────────
     val squadName: String = "",
     val captainName: String = "",
