@@ -2,6 +2,7 @@ package com.sportflow.app.data.repository
 
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Query
@@ -33,6 +34,10 @@ class SportFlowRepository @Inject constructor(
         const val REGISTRATIONS_COLLECTION = "registrations" // sub-collection under gnits_matches
         const val SCORECARDS_COLLECTION  = "scorecards"      // sub-collection under gnits_matches
         const val NOTIFICATION_TRIGGERS  = "gnits_notification_triggers"
+        /** Top-level registrations collection for Admin Data Bridge */
+        const val GNITS_REGISTRATIONS    = "gnits_registrations"
+        /** Per-user notification sub-collection under gnits_users/{uid} */
+        const val USER_NOTIFICATIONS     = "notifications"
 
         // FCM topics — must match what Cloud Functions publishes to
         const val FCM_TOPIC_ALL         = "gnits_sports_all"
@@ -757,6 +762,10 @@ class SportFlowRepository @Inject constructor(
             val userName   = userSnap.getString("displayName") ?: user.displayName ?: ""
             val rollNumber = userSnap.getString("rollNumber") ?: ""
 
+            val sportRole    = userSnap.getString("preferredSportRole") ?: ""
+            val matchName    = "${matchSnap.getString("teamA") ?: ""} vs ${matchSnap.getString("teamB") ?: ""}"
+            val matchSport   = matchSnap.getString("sportType") ?: ""
+
             val registration = hashMapOf(
                 "id"           to user.uid,
                 "uid"          to user.uid,
@@ -766,6 +775,9 @@ class SportFlowRepository @Inject constructor(
                 "department"   to userDept,
                 "yearOfStudy"  to userYear,              // persist for eligibility audit trail
                 "rollNumber"   to rollNumber,
+                "sportRole"    to sportRole,              // Sport-specific role e.g. Bowler, Defender
+                "sportType"    to matchSport,             // Denormalized for admin quick-view
+                "matchName"    to matchName,              // Denormalized for admin list display
                 "status"       to com.sportflow.app.data.model.RegistrationStatus.CONFIRMED.name,
                 "registeredAt" to com.google.firebase.Timestamp.now()
             )
@@ -793,6 +805,30 @@ class SportFlowRepository @Inject constructor(
             matchId = match.id,
             topic   = if (dept.isNotBlank()) "dept_$dept" else FCM_TOPIC_ALL
         )
+
+        // ── Write to top-level gnits_registrations for Admin Data Bridge ──────
+        try {
+            val userSnap2 = firestore.collection(USERS_COLLECTION).document(user.uid).get().await()
+            val sportRoleFinal = userSnap2.getString("preferredSportRole") ?: ""
+            val bridgeDoc = hashMapOf(
+                "uid"          to user.uid,
+                "matchId"      to match.id,
+                "tournamentId" to match.tournamentId,
+                "userName"     to (userSnap2.getString("displayName") ?: user.displayName ?: ""),
+                "department"   to (userSnap2.getString("department") ?: ""),
+                "yearOfStudy"  to (userSnap2.getString("yearOfStudy") ?: ""),
+                "rollNumber"   to (userSnap2.getString("rollNumber") ?: ""),
+                "sportRole"    to sportRoleFinal,
+                "sportType"    to match.sportType,
+                "matchName"    to "${match.teamA} vs ${match.teamB}",
+                "status"       to com.sportflow.app.data.model.RegistrationStatus.CONFIRMED.name,
+                "registeredAt" to com.google.firebase.Timestamp.now(),
+                "seen"         to false  // Admin "New Entry" badge flag
+            )
+            firestore.collection(GNITS_REGISTRATIONS).document("${user.uid}_${match.id}").set(bridgeDoc).await()
+        } catch (_: Exception) {
+            // Non-critical — admin bridge failure should not block player registration
+        }
 
         // Scenario B: squad just became full — broadcast closure alert
         val maxSquadFinal = match.maxSquadSize.takeIf { it > 0 } ?: match.maxRegistrations
@@ -838,8 +874,13 @@ class SportFlowRepository @Inject constructor(
 
         firestore.runTransaction { tx ->
             val snap     = tx.get(matchRef)
+            val regSnap  = tx.get(regRef)
             val curSquad = snap.getLong("currentSquadCount")?.toInt() ?: 0
             val curReg   = snap.getLong("registrationCount")?.toInt() ?: 0
+
+            if (!regSnap.exists()) {
+                throw IllegalArgumentException("No active registration found for this match")
+            }
 
             tx.delete(regRef)
             if (curSquad > 0) {
@@ -861,6 +902,16 @@ class SportFlowRepository @Inject constructor(
                 matchId = matchId,
                 topic   = FCM_TOPIC_ALL
             )
+        }
+
+        // Keep Admin Data Bridge in sync when a player cancels.
+        try {
+            firestore.collection(GNITS_REGISTRATIONS)
+                .document("${user.uid}_${matchId}")
+                .delete()
+                .await()
+        } catch (_: Exception) {
+            // Non-critical — cancellation succeeded even if bridge cleanup failed.
         }
     }
 
@@ -994,6 +1045,69 @@ class SportFlowRepository @Inject constructor(
                     .addOnFailureListener { /* best-effort */ }
             }
         awaitClose { listener.remove() }
+    }
+
+    /**
+     * Real-time stream of full Match documents for all matches the current user is
+     * registered in. This uses TWO snapshot listeners as a single source of truth:
+     *   1) registrations collectionGroup for membership
+     *   2) gnits_matches collection for match document updates
+     *
+     * Result: admin manual edits (venue/team/time) reflect instantly on My Matches
+     * without requiring any registration mutation.
+     */
+    fun observeMyRegisteredMatchesRealtime(): Flow<List<com.sportflow.app.data.model.Match>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        var registeredIds: Set<String> = emptySet()
+        var allMatches: List<com.sportflow.app.data.model.Match> = emptyList()
+
+        fun emitFiltered() {
+            val filtered = if (registeredIds.isEmpty()) {
+                emptyList()
+            } else {
+                allMatches
+                    .filter { it.id in registeredIds }
+                    .sortedByDescending { it.scheduledTime }
+            }
+            trySend(filtered)
+        }
+
+        val registrationListener = firestore.collectionGroup(REGISTRATIONS_COLLECTION)
+            .whereEqualTo("uid", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                registeredIds = snapshot?.documents
+                    ?.mapNotNull { it.getString("matchId") }
+                    ?.toSet()
+                    ?: emptySet()
+                emitFiltered()
+            }
+
+        val matchesListener = firestore.collection(MATCHES_COLLECTION)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                allMatches = snapshot?.documents?.mapNotNull {
+                    it.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = it.id)
+                } ?: emptyList()
+                emitFiltered()
+            }
+
+        awaitClose {
+            registrationListener.remove()
+            matchesListener.remove()
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1155,5 +1269,215 @@ class SportFlowRepository @Inject constructor(
             )
             upsertPlayerScorecard(scorecard)
         }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // NOTIFICATION INTELLIGENCE — Seen/Unseen Tracking + Persistence
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /**
+     * Persist a notification to the current user's notification sub-collection.
+     * Called by NotificationManager when a notification is shown to the user.
+     */
+    suspend fun persistNotification(
+        type: String,
+        title: String,
+        body: String,
+        matchId: String
+    ) {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            val notification = hashMapOf(
+                "type"      to type,
+                "title"     to title,
+                "body"      to body,
+                "matchId"   to matchId,
+                "timestamp" to com.google.firebase.Timestamp.now(),
+                "seen"      to false
+            )
+            firestore.collection(USERS_COLLECTION)
+                .document(uid)
+                .collection(USER_NOTIFICATIONS)
+                .add(notification)
+                .await()
+        } catch (_: Exception) {
+            // Non-critical — notification persistence failure should not crash the app
+        }
+    }
+
+    /**
+     * Real-time count of unseen notifications for the current user.
+     * Drives the bell icon badge on the Home Screen.
+     */
+    fun observeUnseenNotificationCount(): Flow<Int> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(0)
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collection(USERS_COLLECTION)
+            .document(uid)
+            .collection(USER_NOTIFICATIONS)
+            .whereEqualTo("seen", false)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(0)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.size() ?: 0)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Real-time list of all notifications for the current user, newest first.
+     * Used by the Notification Center screen/dialog.
+     */
+    fun observeNotifications(): Flow<List<com.sportflow.app.data.model.NotificationItem>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collection(USERS_COLLECTION)
+            .document(uid)
+            .collection(USER_NOTIFICATIONS)
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(50)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val items = snapshot?.documents?.mapNotNull { doc ->
+                    doc.toObject(com.sportflow.app.data.model.NotificationItem::class.java)
+                        ?.copy(id = doc.id)
+                } ?: emptyList()
+                trySend(items)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /** Mark a single notification as seen */
+    suspend fun markNotificationSeen(notificationId: String) {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            firestore.collection(USERS_COLLECTION)
+                .document(uid)
+                .collection(USER_NOTIFICATIONS)
+                .document(notificationId)
+                .update("seen", true)
+                .await()
+        } catch (_: Exception) {}
+    }
+
+    /** Mark all notifications as seen (bell icon tap) */
+    suspend fun markAllNotificationsSeen() {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            val unseen = firestore.collection(USERS_COLLECTION)
+                .document(uid)
+                .collection(USER_NOTIFICATIONS)
+                .whereEqualTo("seen", false)
+                .get()
+                .await()
+            val batch = firestore.batch()
+            unseen.documents.forEach { doc ->
+                batch.update(doc.reference, "seen", true)
+            }
+            batch.commit().await()
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Get the user's lastCheckedTimestamp for notification dedup.
+     * Stored as a field on the user document itself for simplicity.
+     */
+    suspend fun getLastCheckedTimestamp(): com.google.firebase.Timestamp? {
+        val uid = auth.currentUser?.uid ?: return null
+        return try {
+            val doc = firestore.collection(USERS_COLLECTION).document(uid).get().await()
+            doc.getTimestamp("lastCheckedTimestamp")
+        } catch (_: Exception) { null }
+    }
+
+    /** Update the lastCheckedTimestamp to now */
+    suspend fun updateLastCheckedTimestamp() {
+        val uid = auth.currentUser?.uid ?: return
+        try {
+            firestore.collection(USERS_COLLECTION)
+                .document(uid)
+                .update("lastCheckedTimestamp", com.google.firebase.Timestamp.now())
+                .await()
+        } catch (_: Exception) {}
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ADMIN DATA BRIDGE — Real-time registration stream for Admin Dashboard
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /**
+     * Real-time stream of all registrations from gnits_registrations.
+     * Admin Dashboard listens to this to show all student details + "New Entry" badge.
+     */
+    fun observeAllRegistrations(): Flow<List<com.sportflow.app.data.model.Registration>> = callbackFlow {
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .orderBy("registeredAt", Query.Direction.DESCENDING)
+            .limit(100)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val regs = snapshot?.documents?.mapNotNull { doc ->
+                    doc.toObject(com.sportflow.app.data.model.Registration::class.java)
+                        ?.copy(id = doc.id)
+                } ?: emptyList()
+                trySend(regs)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /**
+     * Count of unseen registrations (admin "New Entry" badge).
+     */
+    fun observeNewRegistrationCount(): Flow<Int> = callbackFlow {
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("seen", false)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(0)
+                    return@addSnapshotListener
+                }
+                trySend(snapshot?.size() ?: 0)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    /** Mark a registration as seen by admin */
+    suspend fun markRegistrationSeen(registrationId: String) {
+        try {
+            firestore.collection(GNITS_REGISTRATIONS)
+                .document(registrationId)
+                .update("seen", true)
+                .await()
+        } catch (_: Exception) {}
+    }
+
+    /** Mark all registrations as seen by admin */
+    suspend fun markAllRegistrationsSeen() {
+        try {
+            val unseen = firestore.collection(GNITS_REGISTRATIONS)
+                .whereEqualTo("seen", false)
+                .get()
+                .await()
+            val batch = firestore.batch()
+            unseen.documents.forEach { doc ->
+                batch.update(doc.reference, "seen", true)
+            }
+            batch.commit().await()
+        } catch (_: Exception) {}
     }
 }

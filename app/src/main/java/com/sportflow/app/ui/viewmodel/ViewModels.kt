@@ -283,6 +283,12 @@ data class AdminUiState(
     val isCreatingMatch: Boolean = false,
     /** Scorecards for the currently selected match (Referee Panel) */
     val matchScorecards: List<PlayerScorecard> = emptyList(),
+    /** All registrations from gnits_registrations (Admin Data Bridge) */
+    val registrations: List<Registration> = emptyList(),
+    /** Count of unseen registrations ("New Entry" badge) */
+    val newRegistrationCount: Int = 0,
+    /** Currently selected registration for detail view */
+    val selectedRegistration: Registration? = null,
     val error: String? = null,
     val successMessage: String? = null
 )
@@ -348,6 +354,22 @@ class AdminViewModel @Inject constructor(
                             selectedMatch = updatedSelected ?: state.selectedMatch
                         )
                     }
+                }
+            } catch (_: Exception) {}
+        }
+        // Listen for registrations (Admin Data Bridge)
+        viewModelScope.launch {
+            try {
+                repository.observeAllRegistrations().collect { regs ->
+                    _uiState.update { it.copy(registrations = regs) }
+                }
+            } catch (_: Exception) {}
+        }
+        // Listen for new (unseen) registration count
+        viewModelScope.launch {
+            try {
+                repository.observeNewRegistrationCount().collect { count ->
+                    _uiState.update { it.copy(newRegistrationCount = count) }
                 }
             } catch (_: Exception) {}
         }
@@ -794,6 +816,26 @@ class AdminViewModel @Inject constructor(
     fun clearMessage() {
         _uiState.update { it.copy(successMessage = null, error = null) }
     }
+
+    // ── Admin Registration Detail View ────────────────────────────────────
+
+    fun selectRegistration(registration: Registration) {
+        _uiState.update { it.copy(selectedRegistration = registration) }
+        // Mark as seen when admin clicks on it
+        viewModelScope.launch {
+            repository.markRegistrationSeen(registration.id)
+        }
+    }
+
+    fun deselectRegistration() {
+        _uiState.update { it.copy(selectedRegistration = null) }
+    }
+
+    fun markAllRegistrationsSeen() {
+        viewModelScope.launch {
+            repository.markAllRegistrationsSeen()
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -822,7 +864,7 @@ class MyMatchesViewModel @Inject constructor(
     private fun loadMyMatches() {
         viewModelScope.launch {
             try {
-                repository.getMyRegisteredMatches().collect { matches ->
+                repository.observeMyRegisteredMatchesRealtime().collect { matches ->
                     _uiState.update {
                         it.copy(
                             myMatches  = matches,
@@ -1061,5 +1103,76 @@ class ScorecardViewModel @Inject constructor(
 
     fun clearScorecard() {
         _uiState.update { ScorecardUiState() }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// NOTIFICATION VIEWMODEL — Bell badge + Notification Center
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+data class NotificationUiState(
+    /** Count of unseen notifications — drives the bell icon badge */
+    val unseenCount: Int = 0,
+    /** Full notification list for Notification Center dialog */
+    val notifications: List<com.sportflow.app.data.model.NotificationItem> = emptyList(),
+    /** Whether the notification center dialog is showing */
+    val showDialog: Boolean = false,
+    val isLoading: Boolean = false
+)
+
+@HiltViewModel
+class NotificationViewModel @Inject constructor(
+    private val repository: SportFlowRepository
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(NotificationUiState())
+    val uiState: StateFlow<NotificationUiState> = _uiState.asStateFlow()
+
+    init {
+        observeUnseenCount()
+        observeNotifications()
+    }
+
+    private fun observeUnseenCount() {
+        viewModelScope.launch {
+            repository.observeUnseenNotificationCount().collect { count ->
+                _uiState.update { it.copy(unseenCount = count) }
+            }
+        }
+    }
+
+    private fun observeNotifications() {
+        viewModelScope.launch {
+            repository.observeNotifications().collect { notifications ->
+                _uiState.update { it.copy(notifications = notifications, isLoading = false) }
+            }
+        }
+    }
+
+    /** Open notification center dialog — marks lastCheckedTimestamp */
+    fun openNotificationCenter() {
+        _uiState.update { it.copy(showDialog = true) }
+        viewModelScope.launch {
+            repository.updateLastCheckedTimestamp()
+        }
+    }
+
+    /** Close notification center dialog */
+    fun closeNotificationCenter() {
+        _uiState.update { it.copy(showDialog = false) }
+    }
+
+    /** Mark a single notification as seen */
+    fun markSeen(notificationId: String) {
+        viewModelScope.launch {
+            repository.markNotificationSeen(notificationId)
+        }
+    }
+
+    /** Mark all notifications as seen (clear badge) */
+    fun markAllSeen() {
+        viewModelScope.launch {
+            repository.markAllNotificationsSeen()
+        }
     }
 }

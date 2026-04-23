@@ -413,7 +413,20 @@ data class Registration(
     val yearOfStudy: String = "",        // GnitsYear code e.g. "SECOND_YEAR"
     val rollNumber: String = "",
     val status: RegistrationStatus = RegistrationStatus.CONFIRMED,
-    val registeredAt: Timestamp? = null
+    val registeredAt: Timestamp? = null,
+    
+    // ── Advanced Squad Registration Fields ────────────────────────────
+    val squadName: String = "",
+    val captainName: String = "",
+    val captainPhone: String = "",
+    val squadSize: Int = 1,
+
+    // ── Sport-Specific Role (e.g. Bowler, Defender, Point Guard) ──────
+    val sportRole: String = "",
+    /** Sport type of the event — denormalized for admin quick-view */
+    val sportType: String = "",
+    /** Match name — denormalized for admin list display */
+    val matchName: String = ""
 )
 
 data class SportUser(
@@ -425,7 +438,9 @@ data class SportUser(
     val department: String = "",
     val yearOfStudy: String = "",        // GnitsYear code e.g. "SECOND_YEAR"
     val teamId: String = "",
-    val photoUrl: String = ""
+    val photoUrl: String = "",
+    /** Default sport-specific role chosen by the player */
+    val preferredSportRole: String = ""
 )
 
 enum class UserRole { PLAYER, ADMIN, ORGANIZER }
@@ -616,4 +631,42 @@ data class FixtureConfig(
     val venue: String = GnitsVenue.MAIN_GROUND.displayName,
     val intervalMinutes: Long = 60,
     val eligibilityText: String = "All GNITS students"
+)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SPORT-SPECIFIC ROLES — Used during Registration for Admin Data Bridge
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+object SportRoles {
+    fun getRoles(sportType: String): List<String> {
+        return when (SportType.fromString(sportType)) {
+            SportType.CRICKET    -> listOf("Batsman", "Bowler", "All-Rounder", "Wicket Keeper", "Fielder")
+            SportType.FOOTBALL   -> listOf("Goalkeeper", "Defender", "Midfielder", "Forward", "Striker")
+            SportType.BASKETBALL -> listOf("Point Guard", "Shooting Guard", "Small Forward", "Power Forward", "Center")
+            SportType.BADMINTON  -> listOf("Singles Player", "Doubles Player", "Mixed Doubles")
+            SportType.VOLLEYBALL -> listOf("Setter", "Outside Hitter", "Middle Blocker", "Libero", "Opposite Hitter")
+            SportType.TABLE_TENNIS -> listOf("Singles Player", "Doubles Player")
+            SportType.KABADDI    -> listOf("Raider", "Defender", "All-Rounder")
+            SportType.ATHLETICS  -> listOf("Sprinter", "Long Distance", "Jumper", "Thrower", "Relay")
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// NOTIFICATION ITEM — Seen/Unseen tracking for in-app Notification Center
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Stored at: gnits_users/{uid}/notifications/{notificationId}
+ * Each notification received by the user (via FCM or Firestore triggers) is
+ * persisted here. The [seen] flag drives the bell icon badge count on the Home Screen.
+ */
+data class NotificationItem(
+    val id: String = "",
+    val type: String = "",              // "score_update" | "match_start" | "spot_opened" | etc.
+    val title: String = "",
+    val body: String = "",
+    val matchId: String = "",
+    val timestamp: Timestamp? = null,
+    val seen: Boolean = false
 )

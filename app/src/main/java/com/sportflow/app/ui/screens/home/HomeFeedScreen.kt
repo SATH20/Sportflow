@@ -1,6 +1,7 @@
 package com.sportflow.app.ui.screens.home
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import com.sportflow.app.data.model.*
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.HomeViewModel
+import com.sportflow.app.ui.viewmodel.NotificationViewModel
 import com.sportflow.app.ui.viewmodel.RegistrationViewModel
 
 // ── Home Feed Screen ──────────────────────────────────────────────────────────
@@ -42,10 +44,12 @@ fun HomeFeedScreen(
     currentUser: SportUser? = null,
     isAdmin: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(),
-    regViewModel: RegistrationViewModel = hiltViewModel()
+    regViewModel: RegistrationViewModel = hiltViewModel(),
+    notifViewModel: NotificationViewModel = hiltViewModel()
 ) {
     val uiState  by viewModel.uiState.collectAsStateWithLifecycle()
     val regState by regViewModel.uiState.collectAsStateWithLifecycle()
+    val notifState by notifViewModel.uiState.collectAsStateWithLifecycle()
 
     // Unified feed: open-registration tournaments first, then scheduled matches
     val unifiedFeed: List<Any> = remember(uiState.upcomingMatches, uiState.tournaments) {
@@ -119,16 +123,34 @@ fun HomeFeedScreen(
                                 }
                             }
                             IconButton(
-                                onClick = { },
+                                onClick = { notifViewModel.openNotificationCenter() },
                                 modifier = Modifier
                                     .size(44.dp)
                                     .background(OffWhite, CircleShape)
                             ) {
-                                Icon(
-                                    Icons.Outlined.Notifications,
-                                    contentDescription = "Notifications",
-                                    tint = TextSecondary
-                                )
+                                BadgedBox(
+                                    badge = {
+                                        if (notifState.unseenCount > 0) {
+                                            Badge(
+                                                containerColor = LiveRed,
+                                                contentColor = Color.White
+                                            ) {
+                                                Text(
+                                                    text = if (notifState.unseenCount > 9) "9+" else "${notifState.unseenCount}",
+                                                    style = SportFlowTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                ) {
+                                    Icon(
+                                        if (notifState.unseenCount > 0) Icons.Filled.Notifications
+                                        else Icons.Outlined.Notifications,
+                                        contentDescription = "Notifications",
+                                        tint = if (notifState.unseenCount > 0) GnitsOrange else TextSecondary
+                                    )
+                                }
                             }
                         }
                     }
@@ -306,9 +328,166 @@ fun HomeFeedScreen(
             }
         }
     }
+
+    // ── Notification Center Dialog ────────────────────────────────────────
+    if (notifState.showDialog) {
+        NotificationCenterDialog(
+            notifications = notifState.notifications,
+            onDismiss = { notifViewModel.closeNotificationCenter() },
+            onMarkAllSeen = { notifViewModel.markAllSeen() },
+            onNotificationClick = { notifViewModel.markSeen(it.id) }
+        )
+    }
 }
 
-// ── Live Match Banner ─────────────────────────────────────────────────────────
+// ── Notification Center Dialog ────────────────────────────────────────────────
+
+@Composable
+private fun NotificationCenterDialog(
+    notifications: List<com.sportflow.app.data.model.NotificationItem>,
+    onDismiss: () -> Unit,
+    onMarkAllSeen: () -> Unit,
+    onNotificationClick: (com.sportflow.app.data.model.NotificationItem) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = PureWhite,
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Notifications",
+                    style = SportFlowTheme.typography.headlineMedium,
+                    color = TextPrimary
+                )
+                TextButton(onClick = onMarkAllSeen) {
+                    Text("Mark all read", color = GnitsOrange, style = SportFlowTheme.typography.labelMedium)
+                }
+            }
+        },
+        text = {
+            if (notifications.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            Icons.Outlined.NotificationsOff,
+                            contentDescription = null,
+                            tint = TextTertiary,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "No notifications yet",
+                            style = SportFlowTheme.typography.bodyMedium,
+                            color = TextSecondary
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(notifications) { notification ->
+                        NotificationItemCard(
+                            notification = notification,
+                            onClick = { onNotificationClick(notification) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = TextSecondary)
+            }
+        }
+    )
+}
+
+@Composable
+private fun NotificationItemCard(
+    notification: com.sportflow.app.data.model.NotificationItem,
+    onClick: () -> Unit
+) {
+    val bgColor = if (!notification.seen) GnitsOrangeLight else OffWhite
+    val iconTint = when (notification.type) {
+        "match_start"          -> SuccessGreen
+        "score_update"         -> InfoBlue
+        "spot_opened"          -> WarningAmber
+        "registration_success" -> GnitsOrange
+        "squad_closed"         -> LiveRed
+        "match_end"            -> TextTertiary
+        else                   -> GnitsOrange
+    }
+    val icon = when (notification.type) {
+        "match_start"          -> Icons.Filled.PlayCircle
+        "score_update"         -> Icons.Filled.Scoreboard
+        "spot_opened"          -> Icons.Filled.EventAvailable
+        "registration_success" -> Icons.Filled.HowToReg
+        "squad_closed"         -> Icons.Filled.Block
+        "match_end"            -> Icons.Filled.Flag
+        else                   -> Icons.Filled.Notifications
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        color = bgColor,
+        border = if (!notification.seen) BorderStroke(1.dp, GnitsOrange.copy(alpha = 0.3f)) else null
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .background(iconTint.copy(alpha = 0.12f), RoundedCornerShape(10.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = notification.title,
+                    style = SportFlowTheme.typography.labelLarge,
+                    color = TextPrimary,
+                    fontWeight = if (!notification.seen) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = notification.body,
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (!notification.seen) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(GnitsOrange, CircleShape)
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun LiveMatchBanner(
@@ -787,7 +966,7 @@ private fun EventFeedCard(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Register",
+                                text = "Join",
                                 style = SportFlowTheme.typography.labelMedium,
                                 color = Color.White,
                                 fontWeight = FontWeight.Bold

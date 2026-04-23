@@ -46,7 +46,7 @@ fun AdminDashboardScreen(
     val tabs = listOf(
         "Create Match", "Live Scoring", "AI Fixtures",
         "Manual Editor", "Referee Panel",
-        "Matches", "Payments", "Tournaments"
+        "Matches", "Payments", "Tournaments", "Registrations"
     )
 
     LazyColumn(
@@ -126,6 +126,13 @@ fun AdminDashboardScreen(
                     accentColor = InfoBlue,
                     modifier = Modifier.weight(1f)
                 )
+                StatTile(
+                    icon = Icons.Filled.HowToReg,
+                    value = "${uiState.registrations.size}",
+                    label = "Entries",
+                    accentColor = SuccessGreen,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
 
@@ -154,11 +161,29 @@ fun AdminDashboardScreen(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
                         text = {
-                            Text(
-                                text = title,
-                                style = SportFlowTheme.typography.labelLarge,
-                                fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = title,
+                                    style = SportFlowTheme.typography.labelLarge,
+                                    fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal
+                                )
+                                // "New Entry" badge for Registrations tab
+                                if (title == "Registrations" && uiState.newRegistrationCount > 0) {
+                                    Badge(
+                                        containerColor = LiveRed,
+                                        contentColor = Color.White
+                                    ) {
+                                        Text(
+                                            text = if (uiState.newRegistrationCount > 9) "9+" else "${uiState.newRegistrationCount}",
+                                            style = SportFlowTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
                         },
                         selectedContentColor = GnitsOrange,
                         unselectedContentColor = TextTertiary
@@ -313,6 +338,33 @@ fun AdminDashboardScreen(
                         isGenerating = uiState.isGeneratingBracket,
                         onGenerateBracket = { viewModel.generateBracket(tournament.id) }
                     )
+                }
+            }
+            8 -> {
+                // ── REGISTRATIONS TAB (Admin Data Bridge) ───────────────────
+                item {
+                    SectionHeader(
+                        title = "Student Registrations",
+                        actionText = if (uiState.newRegistrationCount > 0) "Mark all seen" else null,
+                        onAction = { viewModel.markAllRegistrationsSeen() }
+                    )
+                }
+                if (uiState.selectedRegistration != null) {
+                    item {
+                        RegistrationDetailCard(
+                            registration = uiState.selectedRegistration!!,
+                            onDismiss = { viewModel.deselectRegistration() }
+                        )
+                    }
+                } else if (uiState.registrations.isEmpty()) {
+                    item { EmptyState("No registrations yet") }
+                } else {
+                    items(uiState.registrations) { reg ->
+                        AdminRegistrationCard(
+                            registration = reg,
+                            onClick = { viewModel.selectRegistration(reg) }
+                        )
+                    }
                 }
             }
         }
@@ -1901,6 +1953,270 @@ private fun PlayerScorecardEditorCard(
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
+            }
+        }
+    }
+}
+
+// ── ADMIN REGISTRATION CARD — List item for Registrations tab ─────────────────
+
+@Composable
+private fun AdminRegistrationCard(
+    registration: com.sportflow.app.data.model.Registration,
+    onClick: () -> Unit
+) {
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+        onClick = onClick
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Avatar with initials
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .background(
+                        androidx.compose.ui.graphics.Brush.linearGradient(
+                            colors = listOf(GnitsOrange, GnitsOrangeDark)
+                        ),
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = registration.userName.split(" ")
+                        .take(2)
+                        .mapNotNull { it.firstOrNull()?.uppercase() }
+                        .joinToString(""),
+                    style = SportFlowTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+
+            // Info
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = registration.userName.ifBlank { "Student" },
+                        style = SportFlowTheme.typography.labelLarge,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (registration.department.isNotBlank()) {
+                        Text(
+                            text = registration.department,
+                            style = SportFlowTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                    }
+                    if (registration.sportRole.isNotBlank()) {
+                        Text("·", color = TextTertiary)
+                        Text(
+                            text = registration.sportRole,
+                            style = SportFlowTheme.typography.bodySmall,
+                            color = GnitsOrange,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                if (registration.matchName.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = registration.matchName,
+                        style = SportFlowTheme.typography.labelSmall,
+                        color = TextTertiary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Sport type chip
+            if (registration.sportType.isNotBlank()) {
+                com.sportflow.app.ui.components.SportTypeChip(sportType = registration.sportType)
+            }
+
+            // Chevron
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = "View details",
+                tint = TextTertiary,
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+// ── REGISTRATION DETAIL CARD — Full student profile for eligibility checks ────
+
+@Composable
+private fun RegistrationDetailCard(
+    registration: com.sportflow.app.data.model.Registration,
+    onDismiss: () -> Unit
+) {
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            // Header with back button
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Student Profile",
+                    style = SportFlowTheme.typography.headlineSmall,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Back", tint = TextSecondary)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Avatar + Name
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(64.dp)
+                        .background(
+                            androidx.compose.ui.graphics.Brush.linearGradient(
+                                colors = listOf(GnitsOrange, GnitsOrangeDark)
+                            ),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = registration.userName.split(" ")
+                            .take(2)
+                            .mapNotNull { it.firstOrNull()?.uppercase() }
+                            .joinToString(""),
+                        style = SportFlowTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                Column {
+                    Text(
+                        text = registration.userName.ifBlank { "Unknown Student" },
+                        style = SportFlowTheme.typography.headlineMedium,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (registration.rollNumber.isNotBlank()) {
+                        Text(
+                            text = "Roll: ${registration.rollNumber}",
+                            style = SportFlowTheme.typography.bodyMedium,
+                            color = TextSecondary
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+            HorizontalDivider(color = CardBorder)
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Detail Grid
+            val details = listOf(
+                "Department"    to registration.department.ifBlank { "—" },
+                "Year of Study" to registration.yearOfStudy.ifBlank { "—" },
+                "Sport Role"    to registration.sportRole.ifBlank { "Not specified" },
+                "Sport Type"    to registration.sportType.ifBlank { "—" },
+                "Match"         to registration.matchName.ifBlank { "—" },
+                "Status"        to registration.status.name
+            )
+
+            details.chunked(2).forEach { row ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    row.forEach { (label, value) ->
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = label,
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = TextTertiary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = value,
+                                style = SportFlowTheme.typography.labelLarge,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                    if (row.size == 1) {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            HorizontalDivider(color = CardBorder)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Eligibility Assessment
+            val isEligible = registration.department.isNotBlank() &&
+                    registration.yearOfStudy.isNotBlank() &&
+                    registration.status == com.sportflow.app.data.model.RegistrationStatus.CONFIRMED
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = if (isEligible) SuccessGreenLight else WarningAmberBg
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        if (isEligible) Icons.Filled.CheckCircle else Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = if (isEligible) SuccessGreen else WarningAmber,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = if (isEligible) "Eligible — All profile fields verified"
+                               else "Incomplete — Missing profile data for eligibility",
+                        style = SportFlowTheme.typography.labelMedium,
+                        color = if (isEligible) SuccessGreen else WarningAmber,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
         }
     }
