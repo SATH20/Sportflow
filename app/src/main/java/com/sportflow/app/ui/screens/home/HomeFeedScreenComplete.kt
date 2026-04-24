@@ -3,7 +3,6 @@
 package com.sportflow.app.ui.screens.home
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Campaign
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Schedule
@@ -37,9 +35,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -67,13 +63,15 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.google.firebase.Timestamp
 import com.sportflow.app.data.model.Match
 import com.sportflow.app.data.model.MatchStatus
 import com.sportflow.app.data.model.NotificationItem
 import com.sportflow.app.data.model.Registration
 import com.sportflow.app.data.model.RegistrationStatus
 import com.sportflow.app.data.model.SportUser
-import com.sportflow.app.ui.components.PillButton
+import com.sportflow.app.data.model.Tournament
+import com.sportflow.app.data.model.TournamentStatus
 import com.sportflow.app.ui.components.SectionHeader
 import com.sportflow.app.ui.components.SportCard
 import com.sportflow.app.ui.theme.GnitsOrange
@@ -94,6 +92,8 @@ import com.sportflow.app.ui.viewmodel.AdminViewModel
 import com.sportflow.app.ui.viewmodel.HomeViewModel
 import com.sportflow.app.ui.viewmodel.NotificationViewModel
 import com.sportflow.app.ui.viewmodel.RoleHomeViewModel
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @Composable
 fun HomeFeedScreenComplete(
@@ -145,7 +145,11 @@ fun HomeFeedScreenComplete(
                 actions = {
                     if (isAdmin) {
                         IconButton(onClick = { navController.navigate("admin") }) {
-                            Icon(Icons.Filled.AdminPanelSettings, contentDescription = "Admin", tint = Color.White)
+                            Icon(
+                                Icons.Filled.AdminPanelSettings,
+                                contentDescription = "Admin",
+                                tint = Color.White
+                            )
                         }
                     }
                     IconButton(onClick = { notificationViewModel.openNotificationCenter() }) {
@@ -159,7 +163,11 @@ fun HomeFeedScreenComplete(
                             }
                         ) {
                             Icon(
-                                imageVector = if (notificationState.unseenCount > 0) Icons.Filled.Notifications else Icons.Outlined.Notifications,
+                                imageVector = if (notificationState.unseenCount > 0) {
+                                    Icons.Filled.Notifications
+                                } else {
+                                    Icons.Outlined.Notifications
+                                },
                                 contentDescription = "Notifications",
                                 tint = Color.White
                             )
@@ -194,13 +202,16 @@ fun HomeFeedScreenComplete(
                 DashboardHeaderCard(
                     isAdmin = isAdmin,
                     currentUser = currentUser,
-                    pendingCount = roleState.pendingRegistrations.size,
-                    unseenNotificationCount = notificationState.unseenCount
+                    pendingCount = roleState.pendingRegistrations.size
                 )
             }
 
             if (isAdmin) {
-                val todayMatches = homeState.liveMatches + homeState.upcomingMatches
+                val allTournaments = homeState.tournaments.sortedByDescending { it.startDate ?: it.createdAt }
+                val allMatches = (homeState.liveMatches + homeState.upcomingMatches)
+                    .distinctBy { it.id }
+                    .sortedBy { it.scheduledTime }
+
                 if (roleState.pendingRegistrations.isNotEmpty()) {
                     item { SectionHeader(title = "Review Required") }
                     item {
@@ -211,18 +222,28 @@ fun HomeFeedScreenComplete(
                         )
                     }
                 }
-                item { SectionHeader(title = "Today's Schedule") }
-                if (todayMatches.isEmpty()) {
-                    item { EmptyHomeCard("No matches scheduled today") }
+
+                item { SectionHeader(title = "Tournaments") }
+                if (allTournaments.isEmpty()) {
+                    item { EmptyHomeCard("No tournaments created yet") }
                 } else {
-                    items(todayMatches.sortedBy { it.scheduledTime }) { match ->
+                    items(allTournaments, key = { it.id }) { tournament ->
+                        TournamentScheduleCard(tournament = tournament)
+                    }
+                }
+
+                item { SectionHeader(title = "Matches") }
+                if (allMatches.isEmpty()) {
+                    item { EmptyHomeCard("No scheduled matches available") }
+                } else {
+                    items(allMatches, key = { it.id }) { match ->
                         TimelineMatchCard(match = match)
                     }
                 }
             } else {
-                item { SectionHeader(title = "Registered Matches") }
+                item { SectionHeader(title = "Registered Tournaments & Matches") }
                 if (roleState.myRegistrations.isEmpty()) {
-                    item { EmptyHomeCard("No registrations yet. Join a tournament to start your journey.") }
+                    item { EmptyHomeCard("No registrations yet. Join a tournament or match to see it here.") }
                 } else {
                     item {
                         LazyRow(
@@ -232,23 +253,12 @@ fun HomeFeedScreenComplete(
                             items(roleState.myRegistrations, key = { it.id }) { registration ->
                                 JourneyRegistrationCard(
                                     registration = registration,
-                                    relatedMatch = findRelatedMatch(registration, roleState.allMatches)
+                                    relatedMatch = findRelatedMatch(registration, roleState.allMatches),
+                                    relatedTournament = findRelatedTournament(registration, homeState.tournaments)
                                 )
                             }
                         }
                     }
-                }
-            }
-
-            item { SectionHeader(title = "Recent Notifications") }
-            if (notificationState.notifications.isEmpty()) {
-                item { EmptyHomeCard("No recent notifications") }
-            } else {
-                items(notificationState.notifications.take(6), key = { it.id }) { notification ->
-                    RecentNotificationRow(
-                        notification = notification,
-                        onClick = { notificationViewModel.markSeen(notification.id) }
-                    )
                 }
             }
         }
@@ -315,8 +325,7 @@ fun HomeFeedScreenComplete(
 private fun DashboardHeaderCard(
     isAdmin: Boolean,
     currentUser: SportUser?,
-    pendingCount: Int,
-    unseenNotificationCount: Int
+    pendingCount: Int
 ) {
     SportCard(
         modifier = Modifier
@@ -325,7 +334,7 @@ private fun DashboardHeaderCard(
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
-                text = if (isAdmin) "Physical Directress Dashboard" else "Track approvals, fixtures, and updates in one place",
+                text = if (isAdmin) "Physical Directress Dashboard" else "Registered tournaments and matches",
                 style = SportFlowTheme.typography.headlineSmall,
                 color = TextPrimary,
                 fontWeight = FontWeight.Bold
@@ -335,7 +344,7 @@ private fun DashboardHeaderCard(
                 text = if (isAdmin) {
                     "$pendingCount registrations need review right now."
                 } else {
-                    "${currentUser?.department?.ifBlank { "GNITS" } ?: "GNITS"} notifications: $unseenNotificationCount new."
+                    "Welcome, ${currentUser?.displayName?.ifBlank { "player" } ?: "player"}."
                 },
                 style = SportFlowTheme.typography.bodyMedium,
                 color = TextSecondary
@@ -347,7 +356,8 @@ private fun DashboardHeaderCard(
 @Composable
 private fun JourneyRegistrationCard(
     registration: Registration,
-    relatedMatch: Match?
+    relatedMatch: Match?,
+    relatedTournament: Tournament?
 ) {
     val completed = relatedMatch?.status == MatchStatus.COMPLETED
     val badgeText = when {
@@ -361,9 +371,7 @@ private fun JourneyRegistrationCard(
         else -> WarningAmber
     }
 
-    SportCard(
-        modifier = Modifier.width(280.dp)
-    ) {
+    SportCard(modifier = Modifier.width(300.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -371,7 +379,11 @@ private fun JourneyRegistrationCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = registration.matchName.ifBlank { registration.fixtureUnitName.ifBlank { "Tournament Entry" } },
+                    text = registration.matchName.ifBlank {
+                        registration.fixtureUnitName.ifBlank {
+                            relatedTournament?.name ?: "Tournament Entry"
+                        }
+                    },
                     style = SportFlowTheme.typography.headlineSmall,
                     color = TextPrimary,
                     fontWeight = FontWeight.Bold,
@@ -379,12 +391,21 @@ private fun JourneyRegistrationCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 StatusPill(text = badgeText, color = badgeColor)
             }
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = registration.fixtureUnitName.ifBlank { registration.teamName.ifBlank { registration.userName } },
+                text = registration.fixtureUnitName.ifBlank {
+                    registration.teamName.ifBlank { registration.userName }
+                },
                 style = SportFlowTheme.typography.bodyMedium,
+                color = TextSecondary
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = registrationScheduleLabel(registration, relatedMatch, relatedTournament),
+                style = SportFlowTheme.typography.bodySmall,
                 color = TextSecondary
             )
             if (registration.tournamentId.isNotBlank()) {
@@ -395,6 +416,62 @@ private fun JourneyRegistrationCard(
                     color = GnitsOrangeDark
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun TournamentScheduleCard(tournament: Tournament) {
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(GnitsOrangeLight, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.SportsScore, contentDescription = null, tint = GnitsOrange)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = tournament.name,
+                    style = SportFlowTheme.typography.headlineSmall,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "${tournament.sport} • ${tournament.venue.ifBlank { "GNITS" }}",
+                    style = SportFlowTheme.typography.bodyMedium,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = tournamentDateRangeLabel(tournament),
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+            StatusPill(
+                text = tournament.status.name.replace("_", " "),
+                color = when (tournament.status) {
+                    TournamentStatus.COMPLETED -> InfoBlue
+                    TournamentStatus.IN_PROGRESS -> LiveRed
+                    else -> GnitsOrange
+                }
+            )
         }
     }
 }
@@ -469,7 +546,7 @@ private fun TimelineMatchCard(match: Match) {
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "${match.venue} • ${match.scheduledTime?.toDate()?.toString() ?: "TBD"}",
+                    text = "${match.venue} • ${formatTimestamp(match.scheduledTime)}",
                     style = SportFlowTheme.typography.bodySmall,
                     color = TextSecondary
                 )
@@ -583,6 +660,40 @@ private fun StatusPill(text: String, color: Color) {
 
 private fun findRelatedMatch(registration: Registration, matches: List<Match>): Match? {
     return matches.firstOrNull { it.id == registration.matchId }
+}
+
+private fun findRelatedTournament(registration: Registration, tournaments: List<Tournament>): Tournament? {
+    return tournaments.firstOrNull { it.id == registration.tournamentId }
+}
+
+private fun registrationScheduleLabel(
+    registration: Registration,
+    relatedMatch: Match?,
+    relatedTournament: Tournament?
+): String {
+    return when {
+        relatedMatch != null -> "Match: ${formatTimestamp(relatedMatch.scheduledTime)}"
+        relatedTournament != null -> tournamentDateRangeLabel(relatedTournament)
+        registration.tournamentId.isNotBlank() -> "Tournament schedule will be announced soon"
+        else -> "Match schedule will be announced soon"
+    }
+}
+
+private fun tournamentDateRangeLabel(tournament: Tournament): String {
+    val start = formatTimestamp(tournament.startDate)
+    val end = formatTimestamp(tournament.endDate)
+    return when {
+        tournament.startDate != null && tournament.endDate != null -> "From $start to $end"
+        tournament.startDate != null -> "Starts on $start"
+        tournament.endDate != null -> "Ends on $end"
+        else -> "Schedule will be announced soon"
+    }
+}
+
+private fun formatTimestamp(timestamp: Timestamp?): String {
+    if (timestamp == null) return "TBD"
+    val formatter = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
+    return formatter.format(timestamp.toDate())
 }
 
 @Composable
