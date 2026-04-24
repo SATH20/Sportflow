@@ -40,12 +40,12 @@ fun SportCard(
         modifier = modifier
             .shadow(
                 elevation = 2.dp,
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 ambientColor = CardShadow,
                 spotColor = CardShadow
             )
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(16.dp),
         color = CardSurface,
         border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
     ) {

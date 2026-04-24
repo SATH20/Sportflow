@@ -369,7 +369,9 @@ data class Tournament(
     /** Allowed departments list (empty = all) */
     val allowedDepartments: List<String> = emptyList(),
     /** Allowed academic years list (empty = all years eligible) */
-    val allowedYears: List<String> = emptyList()
+    val allowedYears: List<String> = emptyList(),
+    val createdBy: String = "",
+    val createdAt: Timestamp? = null
 )
 
 enum class TournamentStatus { REGISTRATION, IN_PROGRESS, COMPLETED, CANCELLED }
@@ -403,6 +405,35 @@ enum class PaymentStatus { PENDING, VERIFIED, REJECTED }
 
 enum class RegistrationStatus { PENDING, CONFIRMED, CANCELLED }
 
+enum class RegistrationKind {
+    INDIVIDUAL,
+    TEAM,
+    BADMINTON_SINGLES,
+    BADMINTON_DOUBLES
+}
+
+data class SquadPlayer(
+    val name: String = "",
+    val rollNumber: String = "",
+    val role: String = ""
+)
+
+data class RegistrationPayload(
+    val rollNumber: String = "",
+    val email: String = "",
+    val department: String = "",
+    val yearOfStudy: String = "",
+    val sportRole: String = "",
+    val registrationKind: RegistrationKind = RegistrationKind.INDIVIDUAL,
+    val teamName: String = "",
+    val captainName: String = "",
+    val captainPhone: String = "",
+    val roster: List<SquadPlayer> = emptyList(),
+    val partnerName: String = "",
+    val partnerRollNumber: String = "",
+    val partnerRole: String = ""
+)
+
 data class Registration(
     val id: String = "",
     val uid: String = "",
@@ -429,7 +460,14 @@ data class Registration(
     /** Sport type of the event — denormalized for admin quick-view */
     val sportType: String = "",
     /** Match name — denormalized for admin list display */
-    val matchName: String = ""
+    val matchName: String = "",
+    val registrationKind: RegistrationKind = RegistrationKind.INDIVIDUAL,
+    val teamName: String = "",
+    val roster: List<SquadPlayer> = emptyList(),
+    val partnerName: String = "",
+    val partnerRollNumber: String = "",
+    val partnerRole: String = "",
+    val fixtureUnitName: String = ""
 )
 
 data class SportUser(
@@ -672,4 +710,24 @@ data class NotificationItem(
     val matchId: String = "",
     val timestamp: Timestamp? = null,
     val seen: Boolean = false
+)
+
+enum class AnnouncementCategory {
+    GENERAL,
+    URGENT,
+    VENUE_SHIFT,
+    SCHEDULE_CHANGE,
+    RESULT,
+    FIXTURE_UPDATE
+}
+
+data class Announcement(
+    val id: String = "",
+    val title: String = "",
+    val message: String = "",
+    val category: AnnouncementCategory = AnnouncementCategory.GENERAL,
+    val matchId: String = "",
+    val tournamentId: String = "",
+    val createdAt: Timestamp? = null,
+    val createdBy: String = ""
 )

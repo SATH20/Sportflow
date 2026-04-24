@@ -32,6 +32,7 @@ import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AdminViewModel
 import com.sportflow.app.ui.viewmodel.CreateMatchForm
+import com.sportflow.app.ui.viewmodel.CreateTournamentForm
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -41,18 +42,25 @@ fun AdminDashboardScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val matchForm by viewModel.matchForm.collectAsStateWithLifecycle()
+    val tournamentForm by viewModel.tournamentForm.collectAsStateWithLifecycle()
     val fixtureConfig by viewModel.fixtureConfig.collectAsStateWithLifecycle()
 
     var selectedTab by remember { mutableIntStateOf(0) }
     // Hoisted here (not inside LazyListScope) so rememberSaveable has a valid @Composable context
     var selectedReg by rememberSaveable { mutableStateOf<String?>(null) }
     var regFilter by rememberSaveable { mutableStateOf("ALL") }
+    var denyTargetReg by rememberSaveable { mutableStateOf<String?>(null) }
+    var denyReason by rememberSaveable { mutableStateOf("") }
+    var showAnnouncementDialog by rememberSaveable { mutableStateOf(false) }
+    var announcementTitle by rememberSaveable { mutableStateOf("") }
+    var announcementMessage by rememberSaveable { mutableStateOf("") }
     val tabs = listOf(
-        "Create Match", "Live Scoring", "AI Fixtures",
+        "Create Tournament", "Live Scoring", "AI Fixtures",
         "Manual Editor", "Referee Panel",
         "Matches", "Payments", "Tournaments", "Registrations"
     )
 
+    Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -200,8 +208,8 @@ fun AdminDashboardScreen(
         when (selectedTab) {
             0 -> {
                 // ── CREATE MATCH TAB ─────────────────────────────────────
-                item { SectionHeader(title = "Create New Match") }
-                item { CreateMatchFormCard(matchForm, viewModel) }
+                item { SectionHeader(title = "Create New Tournament") }
+                item { CreateTournamentFormCard(tournamentForm, viewModel) }
             }
             1 -> {
                 // ── LIVE SCORING TAB ─────────────────────────────────────
@@ -377,6 +385,32 @@ fun AdminDashboardScreen(
                     }
                 }
 
+                val fixtureReadyMatchId = uiState.registrations
+                    .filter { it.status == com.sportflow.app.data.model.RegistrationStatus.CONFIRMED }
+                    .groupBy { it.tournamentId.ifBlank { it.matchId } }
+                    .entries
+                    .firstOrNull { it.value.size >= 2 }
+                    ?.key
+                if (fixtureReadyMatchId != null) {
+                    item {
+                        PillButton(
+                            text = "Generate Fixtures from Approved",
+                            onClick = {
+                                if (uiState.tournaments.any { it.id == fixtureReadyMatchId }) {
+                                    viewModel.generateFixturesFromApprovedTournamentRegistrations(fixtureReadyMatchId)
+                                } else {
+                                    viewModel.generateFixturesFromApprovedRegistrations(fixtureReadyMatchId)
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 10.dp),
+                            icon = Icons.Filled.AutoAwesome,
+                            containerColor = GnitsOrange
+                        )
+                    }
+                }
+
                 // Show detail card if a registration is selected
                 if (selectedReg != null) {
                     val reg = uiState.registrations.find { it.id == selectedReg }
@@ -384,7 +418,14 @@ fun AdminDashboardScreen(
                         item {
                             RegistrationDetailCard(
                                 registration = reg,
-                                onDismiss = { selectedReg = null }
+                                onDismiss = { selectedReg = null },
+                                onAccept = {
+                                    viewModel.acceptRegistration(reg.id)
+                                    selectedReg = null
+                                },
+                                onDeny = {
+                                    denyTargetReg = reg.id
+                                }
                             )
                         }
                     }
@@ -418,6 +459,103 @@ fun AdminDashboardScreen(
         }
     }
 
+        FloatingActionButton(
+            onClick = { showAnnouncementDialog = true },
+            containerColor = GnitsOrange,
+            contentColor = Color.White,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp)
+        ) {
+            Icon(Icons.Filled.Campaign, contentDescription = "Create Announcement")
+        }
+    }
+
+    if (showAnnouncementDialog) {
+        AlertDialog(
+            onDismissRequest = { showAnnouncementDialog = false },
+            title = { Text("Create Announcement") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = announcementTitle,
+                        onValueChange = { announcementTitle = it },
+                        label = { Text("Title") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = announcementMessage,
+                        onValueChange = { announcementMessage = it },
+                        label = { Text("Message") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 4
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.postAnnouncement(
+                            announcementTitle,
+                            announcementMessage,
+                            AnnouncementCategory.GENERAL
+                        )
+                        announcementTitle = ""
+                        announcementMessage = ""
+                        showAnnouncementDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = GnitsOrange)
+                ) { Text("Post") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAnnouncementDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (denyTargetReg != null) {
+        AlertDialog(
+            onDismissRequest = {
+                denyTargetReg = null
+                denyReason = ""
+            },
+            title = { Text("Deny Registration") },
+            text = {
+                OutlinedTextField(
+                    value = denyReason,
+                    onValueChange = { denyReason = it },
+                    label = { Text("Reason") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        denyTargetReg?.let {
+                            viewModel.denyRegistration(it, denyReason.ifBlank { "No reason provided" })
+                        }
+                        denyTargetReg = null
+                        denyReason = ""
+                        selectedReg = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = LiveRed)
+                ) {
+                    Text("Deny")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    denyTargetReg = null
+                    denyReason = ""
+                }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     uiState.successMessage?.let { msg ->
         LaunchedEffect(msg) {
             kotlinx.coroutines.delay(2000)
@@ -427,6 +565,119 @@ fun AdminDashboardScreen(
 }
 
 // ── CREATE MATCH FORM ────────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CreateTournamentFormCard(
+    form: CreateTournamentForm,
+    viewModel: AdminViewModel
+) {
+    val sportTypes = listOf("Football", "Cricket", "Basketball", "Badminton", "Volleyball", "Table Tennis", "Kabaddi", "Athletics")
+    val venues = GnitsVenue.allNames
+    var sportExpanded by remember { mutableStateOf(false) }
+    var venueExpanded by remember { mutableStateOf(false) }
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            OutlinedTextField(
+                value = form.name,
+                onValueChange = { viewModel.updateTournamentForm(form.copy(name = it)) },
+                label = { Text("Tournament Name *") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true
+            )
+
+            ExposedDropdownMenuBox(expanded = sportExpanded, onExpandedChange = { sportExpanded = !sportExpanded }) {
+                OutlinedTextField(
+                    value = form.sport,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Sport *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sportExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(expanded = sportExpanded, onDismissRequest = { sportExpanded = false }) {
+                    sportTypes.forEach { sport ->
+                        DropdownMenuItem(
+                            text = { Text(sport) },
+                            onClick = {
+                                viewModel.updateTournamentForm(form.copy(sport = sport))
+                                sportExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            ExposedDropdownMenuBox(expanded = venueExpanded, onExpandedChange = { venueExpanded = !venueExpanded }) {
+                OutlinedTextField(
+                    value = form.venue,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Venue *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = venueExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(expanded = venueExpanded, onDismissRequest = { venueExpanded = false }) {
+                    venues.forEach { venue ->
+                        DropdownMenuItem(
+                            text = { Text(venue) },
+                            onClick = {
+                                viewModel.updateTournamentForm(form.copy(venue = venue))
+                                venueExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = form.maxTeams,
+                    onValueChange = { value ->
+                        viewModel.updateTournamentForm(form.copy(maxTeams = value.filter { it.isDigit() }))
+                    },
+                    label = { Text("Max Teams") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = form.prizePool,
+                    onValueChange = { viewModel.updateTournamentForm(form.copy(prizePool = it)) },
+                    label = { Text("Prize / Note") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
+            }
+
+            OutlinedTextField(
+                value = form.eligibilityText,
+                onValueChange = { viewModel.updateTournamentForm(form.copy(eligibilityText = it)) },
+                label = { Text("Eligibility") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                minLines = 2
+            )
+
+            PillButton(
+                text = "Create Tournament",
+                onClick = { viewModel.createTournament() },
+                modifier = Modifier.fillMaxWidth(),
+                icon = Icons.Filled.EmojiEvents,
+                containerColor = GnitsOrange
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2119,7 +2370,9 @@ private fun AdminRegistrationCard(
 @Composable
 private fun RegistrationDetailCard(
     registration: com.sportflow.app.data.model.Registration,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onAccept: () -> Unit,
+    onDeny: () -> Unit
 ) {
     SportCard(
         modifier = Modifier
@@ -2200,6 +2453,8 @@ private fun RegistrationDetailCard(
                 "Sport Role"    to registration.sportRole.ifBlank { "Not specified" },
                 "Sport Type"    to registration.sportType.ifBlank { "—" },
                 "Match"         to registration.matchName.ifBlank { "—" },
+                "Entry Type"    to registration.registrationKind.name.replace('_', ' '),
+                "Fixture Unit"  to registration.fixtureUnitName.ifBlank { registration.teamName.ifBlank { registration.userName } },
                 "Status"        to registration.status.name
             )
 
@@ -2236,6 +2491,37 @@ private fun RegistrationDetailCard(
             HorizontalDivider(color = CardBorder)
             Spacer(modifier = Modifier.height(12.dp))
 
+            if (registration.teamName.isNotBlank() || registration.partnerName.isNotBlank() || registration.roster.isNotEmpty()) {
+                Text(
+                    text = "Registration Unit",
+                    style = SportFlowTheme.typography.labelLarge,
+                    color = GnitsOrange,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                if (registration.teamName.isNotBlank()) {
+                    Text("Team: ${registration.teamName}", style = SportFlowTheme.typography.bodyMedium, color = TextPrimary)
+                    Text("Captain: ${registration.captainName}", style = SportFlowTheme.typography.bodyMedium, color = TextPrimary)
+                }
+                if (registration.partnerName.isNotBlank()) {
+                    Text(
+                        "Partner: ${registration.partnerName} (${registration.partnerRollNumber})",
+                        style = SportFlowTheme.typography.bodyMedium,
+                        color = TextPrimary
+                    )
+                }
+                registration.roster.forEachIndexed { index, player ->
+                    Text(
+                        "${index + 1}. ${player.name} - ${player.rollNumber} - ${player.role}",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = CardBorder)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             // Eligibility Assessment
             val isEligible = registration.department.isNotBlank() &&
                     registration.yearOfStudy.isNotBlank() &&
@@ -2264,6 +2550,34 @@ private fun RegistrationDetailCard(
                         color = if (isEligible) SuccessGreen else WarningAmber,
                         fontWeight = FontWeight.SemiBold
                     )
+                }
+            }
+
+            if (registration.status == com.sportflow.app.data.model.RegistrationStatus.PENDING) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDeny,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = LiveRed),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed)
+                    ) {
+                        Icon(Icons.Filled.Close, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Deny")
+                    }
+                    Button(
+                        onClick = onAccept,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = SuccessGreen)
+                    ) {
+                        Icon(Icons.Filled.Check, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Accept")
+                    }
                 }
             }
         }

@@ -47,16 +47,33 @@ fun AdvancedRegistrationBottomSheet(
     
     // Step 3 data (team sports only)
     var squadName by remember { mutableStateOf("") }
-    var captainName by remember { mutableStateOf("") }
+    var captainName by remember { mutableStateOf(currentUser?.displayName ?: "") }
     var captainPhone by remember { mutableStateOf("") }
+    var roster by remember {
+        mutableStateOf(
+            listOf(
+                SquadPlayer(
+                    name = currentUser?.displayName ?: "",
+                    rollNumber = currentUser?.rollNumber ?: "",
+                    role = ""
+                )
+            )
+        )
+    }
+    var badmintonMode by remember { mutableStateOf(RegistrationKind.BADMINTON_SINGLES) }
+    var partnerName by remember { mutableStateOf("") }
+    var partnerRollNumber by remember { mutableStateOf("") }
+    var partnerRole by remember { mutableStateOf("") }
     
-    val isTeamSport = when (SportType.fromString(match.sportType)) {
+    val sportType = SportType.fromString(match.sportType)
+    val isTeamSport = when (sportType) {
         SportType.FOOTBALL, SportType.CRICKET, SportType.BASKETBALL, 
         SportType.VOLLEYBALL, SportType.KABADDI -> true
         else -> false
     }
+    val isBadminton = sportType == SportType.BADMINTON
     
-    val maxSteps = if (isTeamSport) 3 else 2
+    val maxSteps = if (isTeamSport || isBadminton) 3 else 2
     
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -132,14 +149,30 @@ fun AdvancedRegistrationBottomSheet(
                         selectedRole = selectedRole,
                         onRoleChange = { selectedRole = it }
                     )
-                    3 -> Step3SquadDetails(
-                        squadName = squadName,
-                        onSquadNameChange = { squadName = it },
-                        captainName = captainName,
-                        onCaptainNameChange = { captainName = it },
-                        captainPhone = captainPhone,
-                        onCaptainPhoneChange = { captainPhone = it }
-                    )
+                    3 -> if (isTeamSport) {
+                        Step3SquadDetails(
+                            sportType = match.sportType,
+                            squadName = squadName,
+                            onSquadNameChange = { squadName = it },
+                            captainName = captainName,
+                            onCaptainNameChange = { captainName = it },
+                            captainPhone = captainPhone,
+                            onCaptainPhoneChange = { captainPhone = it },
+                            roster = roster,
+                            onRosterChange = { roster = it }
+                        )
+                    } else {
+                        Step3BadmintonDetails(
+                            mode = badmintonMode,
+                            onModeChange = { badmintonMode = it },
+                            partnerName = partnerName,
+                            onPartnerNameChange = { partnerName = it },
+                            partnerRollNumber = partnerRollNumber,
+                            onPartnerRollNumberChange = { partnerRollNumber = it },
+                            partnerRole = partnerRole,
+                            onPartnerRoleChange = { partnerRole = it }
+                        )
+                    }
                 }
             }
             
@@ -171,6 +204,14 @@ fun AdvancedRegistrationBottomSheet(
                             currentStep++
                         } else {
                             // Submit registration
+                            val normalizedRoster = roster.mapIndexed { index, player ->
+                                player.copy(
+                                    name = player.name.ifBlank { if (index == 0) captainName else player.name },
+                                    rollNumber = player.rollNumber.ifBlank { if (index == 0) rollNumber else player.rollNumber },
+                                    role = player.role.ifBlank { if (index == 0) selectedRole else player.role }
+                                )
+                            }.filter { it.name.isNotBlank() || it.rollNumber.isNotBlank() || it.role.isNotBlank() }
+
                             val data = RegistrationData(
                                 rollNumber = rollNumber,
                                 email = email,
@@ -178,8 +219,18 @@ fun AdvancedRegistrationBottomSheet(
                                 yearOfStudy = selectedYear,
                                 sportRole = selectedRole,
                                 squadName = squadName,
+                                teamName = squadName,
                                 captainName = captainName,
-                                captainPhone = captainPhone
+                                captainPhone = captainPhone,
+                                registrationKind = when {
+                                    isTeamSport -> RegistrationKind.TEAM
+                                    isBadminton -> badmintonMode
+                                    else -> RegistrationKind.INDIVIDUAL
+                                },
+                                roster = if (isTeamSport) normalizedRoster else emptyList(),
+                                partnerName = partnerName,
+                                partnerRollNumber = partnerRollNumber,
+                                partnerRole = partnerRole
                             )
                             onRegister(data)
                         }
@@ -189,8 +240,18 @@ fun AdvancedRegistrationBottomSheet(
                         1 -> rollNumber.isNotBlank() && email.isNotBlank() && 
                              selectedDepartment.isNotBlank() && selectedYear.isNotBlank()
                         2 -> selectedRole.isNotBlank()
-                        3 -> squadName.isNotBlank() && captainName.isNotBlank() && 
-                             captainPhone.isNotBlank()
+                        3 -> if (isTeamSport) {
+                            squadName.isNotBlank() && captainName.isNotBlank() &&
+                                captainPhone.isNotBlank() && roster.isNotEmpty() &&
+                                roster.all { player ->
+                                    player.name.isNotBlank() &&
+                                        player.rollNumber.isNotBlank() &&
+                                        (player.role.isNotBlank() || (roster.indexOf(player) == 0 && selectedRole.isNotBlank()))
+                                }
+                        } else {
+                            badmintonMode == RegistrationKind.BADMINTON_SINGLES ||
+                                (partnerName.isNotBlank() && partnerRollNumber.isNotBlank())
+                        }
                         else -> false
                     },
                     colors = ButtonDefaults.buttonColors(
@@ -420,16 +481,20 @@ private fun RoleSelectionCard(
 
 @Composable
 private fun Step3SquadDetails(
+    sportType: String,
     squadName: String,
     onSquadNameChange: (String) -> Unit,
     captainName: String,
     onCaptainNameChange: (String) -> Unit,
     captainPhone: String,
-    onCaptainPhoneChange: (String) -> Unit
+    onCaptainPhoneChange: (String) -> Unit,
+    roster: List<SquadPlayer>,
+    onRosterChange: (List<SquadPlayer>) -> Unit
 ) {
+    val roles = SportRoles.getRoles(sportType)
     Column {
         Text(
-            text = "Step 3: Squad Details",
+            text = "Step 3: Create Team",
             style = SportFlowTheme.typography.headlineSmall,
             color = TextPrimary,
             fontWeight = FontWeight.Bold
@@ -488,6 +553,203 @@ private fun Step3SquadDetails(
                 cursorColor = GnitsOrange
             )
         )
+
+        Spacer(Modifier.height(16.dp))
+
+        Text(
+            text = "Squad Roster",
+            style = SportFlowTheme.typography.headlineSmall,
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(8.dp))
+
+        roster.forEachIndexed { index, player ->
+            SquadPlayerEditor(
+                index = index,
+                player = player,
+                roles = roles,
+                canRemove = roster.size > 1,
+                onChange = { updated ->
+                    onRosterChange(roster.toMutableList().also { it[index] = updated })
+                },
+                onRemove = {
+                    onRosterChange(roster.toMutableList().also { it.removeAt(index) })
+                }
+            )
+            Spacer(Modifier.height(10.dp))
+        }
+
+        OutlinedButton(
+            onClick = {
+                onRosterChange(roster + SquadPlayer())
+            },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = GnitsOrange)
+        ) {
+            Icon(Icons.Filled.PersonAdd, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Add Player")
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SquadPlayerEditor(
+    index: Int,
+    player: SquadPlayer,
+    roles: List<String>,
+    canRemove: Boolean,
+    onChange: (SquadPlayer) -> Unit,
+    onRemove: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = OffWhite,
+        border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Player ${index + 1}",
+                    style = SportFlowTheme.typography.labelLarge,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold
+                )
+                if (canRemove) {
+                    IconButton(onClick = onRemove, modifier = Modifier.size(32.dp)) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Remove player", tint = ErrorRed)
+                    }
+                }
+            }
+            OutlinedTextField(
+                value = player.name,
+                onValueChange = { onChange(player.copy(name = it)) },
+                label = { Text("Name") },
+                leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = player.rollNumber,
+                onValueChange = { onChange(player.copy(rollNumber = it)) },
+                label = { Text("Roll Number") },
+                leadingIcon = { Icon(Icons.Filled.Badge, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
+            )
+            Spacer(Modifier.height(8.dp))
+            var expanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it }
+            ) {
+                OutlinedTextField(
+                    value = player.role,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Role") },
+                    leadingIcon = { Icon(Icons.Filled.Sports, contentDescription = null) },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
+                )
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    roles.forEach { role ->
+                        DropdownMenuItem(
+                            text = { Text(role) },
+                            onClick = {
+                                onChange(player.copy(role = role))
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Step3BadmintonDetails(
+    mode: RegistrationKind,
+    onModeChange: (RegistrationKind) -> Unit,
+    partnerName: String,
+    onPartnerNameChange: (String) -> Unit,
+    partnerRollNumber: String,
+    onPartnerRollNumberChange: (String) -> Unit,
+    partnerRole: String,
+    onPartnerRoleChange: (String) -> Unit
+) {
+    Column {
+        Text(
+            text = "Step 3: Badminton Entry",
+            style = SportFlowTheme.typography.headlineSmall,
+            color = TextPrimary,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            FilterChip(
+                selected = mode == RegistrationKind.BADMINTON_SINGLES,
+                onClick = { onModeChange(RegistrationKind.BADMINTON_SINGLES) },
+                label = { Text("Singles") },
+                leadingIcon = if (mode == RegistrationKind.BADMINTON_SINGLES) {
+                    { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null
+            )
+            FilterChip(
+                selected = mode == RegistrationKind.BADMINTON_DOUBLES,
+                onClick = { onModeChange(RegistrationKind.BADMINTON_DOUBLES) },
+                label = { Text("Doubles Pair") },
+                leadingIcon = if (mode == RegistrationKind.BADMINTON_DOUBLES) {
+                    { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                } else null
+            )
+        }
+
+        if (mode == RegistrationKind.BADMINTON_DOUBLES) {
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(
+                value = partnerName,
+                onValueChange = onPartnerNameChange,
+                label = { Text("Partner Name") },
+                leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = partnerRollNumber,
+                onValueChange = onPartnerRollNumberChange,
+                label = { Text("Partner Roll Number") },
+                leadingIcon = { Icon(Icons.Filled.Badge, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = partnerRole,
+                onValueChange = onPartnerRoleChange,
+                label = { Text("Partner Role") },
+                leadingIcon = { Icon(Icons.Filled.SportsTennis, contentDescription = null) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
+            )
+        }
     }
 }
 
@@ -501,6 +763,12 @@ data class RegistrationData(
     val yearOfStudy: String,
     val sportRole: String,
     val squadName: String = "",
+    val teamName: String = "",
     val captainName: String = "",
-    val captainPhone: String = ""
+    val captainPhone: String = "",
+    val registrationKind: RegistrationKind = RegistrationKind.INDIVIDUAL,
+    val roster: List<SquadPlayer> = emptyList(),
+    val partnerName: String = "",
+    val partnerRollNumber: String = "",
+    val partnerRole: String = ""
 )

@@ -105,6 +105,34 @@ fun AdminApprovalScreen(
                 "CONFIRMED" -> uiState.registrations.filter { it.status == RegistrationStatus.CONFIRMED }
                 else -> uiState.registrations
             }
+            val fixtureReadyMatchId = uiState.registrations
+                .filter { it.status == RegistrationStatus.CONFIRMED }
+                .groupBy { it.tournamentId.ifBlank { it.matchId } }
+                .entries
+                .firstOrNull { it.value.size >= 2 }
+                ?.key
+
+            if (fixtureReadyMatchId != null) {
+                Button(
+                    onClick = {
+                        if (uiState.tournaments.any { it.id == fixtureReadyMatchId }) {
+                            viewModel.generateFixturesFromApprovedTournamentRegistrations(fixtureReadyMatchId)
+                        } else {
+                            viewModel.generateFixturesFromApprovedRegistrations(fixtureReadyMatchId)
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF09819))
+                ) {
+                    Icon(Icons.Filled.AutoAwesome, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Generate Fixtures from Approved")
+                }
+                Spacer(Modifier.height(8.dp))
+            }
 
             if (filteredRegistrations.isEmpty()) {
                 Box(
@@ -220,12 +248,6 @@ fun RegistrationCard(
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        if (!registration.seen) {
-            onMarkSeen()
-        }
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -324,11 +346,34 @@ fun RegistrationCard(
 
                     DetailRow("Email", registration.email)
                     DetailRow("Year", GnitsYear.fromCode(registration.yearOfStudy)?.displayName ?: registration.yearOfStudy)
+                    DetailRow("Entry Type", registration.registrationKind.name.replace('_', ' '))
+                    DetailRow("Fixture Unit", registration.fixtureUnitName.ifBlank { registration.teamName.ifBlank { registration.userName } })
                     DetailRow("Sport Role", registration.sportRole)
-                    if (registration.squadName.isNotBlank()) {
-                        DetailRow("Squad Name", registration.squadName)
+                    if (registration.teamName.isNotBlank() || registration.squadName.isNotBlank()) {
+                        DetailRow("Team Name", registration.teamName.ifBlank { registration.squadName })
                         DetailRow("Captain", registration.captainName)
                         DetailRow("Captain Phone", registration.captainPhone)
+                    }
+                    if (registration.partnerName.isNotBlank()) {
+                        DetailRow("Partner", registration.partnerName)
+                        DetailRow("Partner Roll", registration.partnerRollNumber)
+                        DetailRow("Partner Role", registration.partnerRole)
+                    }
+                    if (registration.roster.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = "Squad List",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color(0xFFF09819),
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        registration.roster.forEachIndexed { index, player ->
+                            DetailRow(
+                                "Player ${index + 1}",
+                                "${player.name} - ${player.rollNumber} - ${player.role}"
+                            )
+                        }
                     }
                     DetailRow("Registered At", registration.registeredAt?.toDate()?.toString() ?: "N/A")
                 }
@@ -336,7 +381,10 @@ fun RegistrationCard(
 
             // Expand/Collapse button
             TextButton(
-                onClick = { expanded = !expanded },
+                onClick = {
+                    expanded = !expanded
+                    if (!registration.seen) onMarkSeen()
+                },
                 modifier = Modifier.align(Alignment.End)
             ) {
                 Text(if (expanded) "Show Less" else "Show More")

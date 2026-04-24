@@ -3,6 +3,7 @@ package com.sportflow.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sportflow.app.data.model.NotificationItem
+import com.sportflow.app.data.model.UserRole
 import com.sportflow.app.data.repository.SportFlowRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -13,7 +14,8 @@ data class NotificationUiState(
     val notifications: List<NotificationItem> = emptyList(),
     val unseenCount: Int = 0,
     val showDialog: Boolean = false,
-    val isLoading: Boolean = false
+    val isLoading: Boolean = false,
+    val userRole: UserRole = UserRole.PLAYER
 )
 
 @HiltViewModel
@@ -32,11 +34,19 @@ class NotificationViewModel @Inject constructor(
         val uid = repository.getCurrentUser()?.uid ?: return
 
         viewModelScope.launch {
+            val role = repository.getCurrentUserProfile()?.role ?: UserRole.PLAYER
+            _uiState.update { it.copy(userRole = role) }
             repository.getNotifications(uid).collect { notifications ->
-                val unseenCount = notifications.count { !it.seen }
+                val filtered = notifications.filter { notification ->
+                    when (role) {
+                        UserRole.ADMIN -> notification.type != "registration_success"
+                        else -> notification.type != "admin_registration_pending"
+                    }
+                }
+                val unseenCount = filtered.count { !it.seen }
                 _uiState.update {
                     it.copy(
-                        notifications = notifications,
+                        notifications = filtered,
                         unseenCount = unseenCount
                     )
                 }

@@ -3,7 +3,10 @@ package com.sportflow.app.ui.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sportflow.app.data.model.Match
+import com.sportflow.app.data.model.RegistrationPayload
+import com.sportflow.app.data.model.SportType
 import com.sportflow.app.data.model.SportUser
+import com.sportflow.app.data.model.Tournament
 import com.sportflow.app.data.model.UserRole
 import com.sportflow.app.data.repository.SportFlowRepository
 import com.sportflow.app.ui.components.RegistrationData
@@ -49,6 +52,11 @@ class RegistrationViewModel @Inject constructor(
                 _uiState.update { it.copy(registeredMatchIds = ids) }
             }
         }
+        viewModelScope.launch {
+            repository.observeMyRegisteredTournamentIds().collect { ids ->
+                _uiState.update { it.copy(registeredTournamentIds = ids) }
+            }
+        }
     }
 
     /**
@@ -57,6 +65,10 @@ class RegistrationViewModel @Inject constructor(
      */
     fun isRegisteredFor(matchId: String): Boolean {
         return matchId in _uiState.value.registeredMatchIds
+    }
+
+    fun isRegisteredForTournament(tournamentId: String): Boolean {
+        return tournamentId in _uiState.value.registeredTournamentIds
     }
 
     /**
@@ -79,13 +91,28 @@ class RegistrationViewModel @Inject constructor(
                     )
                 }
 
-                // Perform registration
-                repository.registerForMatch(match)
+                val payload = RegistrationPayload(
+                    rollNumber = data.rollNumber,
+                    email = data.email,
+                    department = data.department,
+                    yearOfStudy = data.yearOfStudy,
+                    sportRole = data.sportRole,
+                    registrationKind = data.registrationKind,
+                    teamName = data.teamName.ifBlank { data.squadName },
+                    captainName = data.captainName,
+                    captainPhone = data.captainPhone,
+                    roster = data.roster,
+                    partnerName = data.partnerName,
+                    partnerRollNumber = data.partnerRollNumber,
+                    partnerRole = data.partnerRole
+                )
+
+                repository.registerForMatch(match, payload)
 
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        successMessage = "✅ Registration successful! You're confirmed for ${match.teamA} vs ${match.teamB}"
+                        successMessage = "Registration submitted. Admin approval is pending."
                     )
                 }
             } catch (e: Exception) {
@@ -99,6 +126,50 @@ class RegistrationViewModel @Inject constructor(
         }
     }
 
+    fun registerForTournament(tournament: Tournament, data: RegistrationData) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val uid = repository.getCurrentUser()?.uid
+                if (uid != null) {
+                    repository.updateUserProfile(
+                        uid = uid,
+                        rollNumber = data.rollNumber,
+                        department = data.department,
+                        yearOfStudy = data.yearOfStudy,
+                        preferredSportRole = data.sportRole
+                    )
+                }
+                val payload = RegistrationPayload(
+                    rollNumber = data.rollNumber,
+                    email = data.email,
+                    department = data.department,
+                    yearOfStudy = data.yearOfStudy,
+                    sportRole = data.sportRole,
+                    registrationKind = data.registrationKind,
+                    teamName = data.teamName.ifBlank { data.squadName },
+                    captainName = data.captainName,
+                    captainPhone = data.captainPhone,
+                    roster = data.roster,
+                    partnerName = data.partnerName,
+                    partnerRollNumber = data.partnerRollNumber,
+                    partnerRole = data.partnerRole
+                )
+                repository.registerForTournament(tournament, payload)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        successMessage = "Tournament registration submitted. Admin approval is pending."
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isLoading = false, error = e.message ?: "Registration failed")
+                }
+            }
+        }
+    }
+
     /**
      * Simple register (from Home feed quick-register button).
      * Used by HomeFeedScreen which passes a UserRole.
@@ -106,6 +177,17 @@ class RegistrationViewModel @Inject constructor(
     fun register(match: Match, role: UserRole) {
         if (role == UserRole.ADMIN) {
             _uiState.update { it.copy(error = "Admins cannot register for matches") }
+            return
+        }
+        val sportType = SportType.fromString(match.sportType)
+        if (sportType == SportType.CRICKET ||
+            sportType == SportType.FOOTBALL ||
+            sportType == SportType.BASKETBALL ||
+            sportType == SportType.VOLLEYBALL ||
+            sportType == SportType.KABADDI ||
+            sportType == SportType.BADMINTON
+        ) {
+            _uiState.update { it.copy(error = "Open the registration form to create a team or badminton entry") }
             return
         }
         viewModelScope.launch {

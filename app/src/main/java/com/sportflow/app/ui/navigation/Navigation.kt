@@ -25,6 +25,7 @@ import com.sportflow.app.ui.screens.home.HomeFeedScreen
 import com.sportflow.app.ui.screens.home.MyMatchesScreen
 import com.sportflow.app.ui.screens.live.LiveMatchCenterScreen
 import com.sportflow.app.ui.screens.profile.ProfileScreen
+import com.sportflow.app.ui.screens.updates.UpdatesScreen
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AuthViewModel
 
@@ -37,6 +38,7 @@ sealed class Screen(
     data object Login : Screen("login", "Login", Icons.Filled.Login, Icons.Outlined.Login)
     data object Home : Screen("home", "Home", Icons.Filled.Home, Icons.Outlined.Home)
     data object Events : Screen("events", "Events", Icons.Filled.Event, Icons.Outlined.Event)
+    data object Updates : Screen("updates", "Updates", Icons.Filled.Campaign, Icons.Outlined.Campaign)
     data object MyMatches : Screen("my_matches", "My Matches", Icons.Filled.SportsSoccer, Icons.Outlined.SportsSoccer)
     data object Profile : Screen("profile", "Profile", Icons.Filled.Person, Icons.Outlined.Person)
 
@@ -55,6 +57,7 @@ sealed class Screen(
 private val playerNavItems = listOf(
     Screen.Home,
     Screen.Events,
+    Screen.Updates,
     Screen.MyMatches,
     Screen.Profile
 )
@@ -62,6 +65,7 @@ private val playerNavItems = listOf(
 private val adminNavItems = listOf(
     Screen.Home,
     Screen.Events,
+    Screen.Updates,
     Screen.Admin,
     Screen.Profile
 )
@@ -165,6 +169,10 @@ fun SportFlowNavHost() {
             // ── Events (both roles) ───────────────────────────────────────
             composable(Screen.Events.route) {
                 EventsScreen(navController = navController)
+            }
+
+            composable(Screen.Updates.route) {
+                UpdatesScreen(navController = navController)
             }
 
             // ── My Matches — PLAYER ONLY ──────────────────────────────────

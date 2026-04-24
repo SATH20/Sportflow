@@ -115,19 +115,31 @@ class GnitsMessagingService : FirebaseMessagingService() {
         // Persist to user's notification sub-collection for bell badge
         val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
         if (uid != null) {
-            val notification = hashMapOf(
-                "type"      to type,
-                "title"     to title,
-                "body"      to body,
-                "matchId"   to (matchId ?: ""),
-                "timestamp" to com.google.firebase.Timestamp.now(),
-                "seen"      to false
-            )
-            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            val store = com.google.firebase.firestore.FirebaseFirestore.getInstance()
                 .collection("gnits_users")
                 .document(uid)
                 .collection("notifications")
-                .add(notification)
+            store
+                .whereEqualTo("type", type)
+                .whereEqualTo("title", title)
+                .whereEqualTo("body", body)
+                .whereEqualTo("matchId", matchId ?: "")
+                .whereEqualTo("seen", false)
+                .limit(1)
+                .get()
+                .addOnSuccessListener { existing ->
+                    if (existing.isEmpty) {
+                        val notification = hashMapOf(
+                            "type" to type,
+                            "title" to title,
+                            "body" to body,
+                            "matchId" to (matchId ?: ""),
+                            "timestamp" to com.google.firebase.Timestamp.now(),
+                            "seen" to false
+                        )
+                        store.add(notification)
+                    }
+                }
         }
 
         showNotification(title, body, channelId, matchId)

@@ -29,14 +29,18 @@ import com.sportflow.app.data.model.*
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.HomeViewModel
+import com.sportflow.app.ui.viewmodel.RegistrationViewModel
 
 @Composable
 fun EventsScreen(
     navController: NavHostController,
-    viewModel: HomeViewModel = hiltViewModel()
+    viewModel: HomeViewModel = hiltViewModel(),
+    registrationViewModel: RegistrationViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val registrationState by registrationViewModel.uiState.collectAsStateWithLifecycle()
     var selectedFilter by remember { mutableStateOf("All") }
+    var selectedTournament by remember { mutableStateOf<Tournament?>(null) }
     val filters = listOf("All", "Football", "Cricket", "Basketball", "Badminton", "Volleyball")
 
     LazyColumn(
@@ -131,6 +135,9 @@ fun EventsScreen(
             }) { tournament ->
                 TournamentEventCard(
                     tournament = tournament,
+                    isRegistered = tournament.id in registrationState.registeredTournamentIds,
+                    isAdmin = registrationState.currentUser?.role == UserRole.ADMIN,
+                    onRegister = { selectedTournament = tournament },
                     onClick = {
                         navController.navigate("bracket?tournamentId=${tournament.id}")
                     }
@@ -179,6 +186,18 @@ fun EventsScreen(
             }
         }
     }
+
+    selectedTournament?.let { tournament ->
+        AdvancedRegistrationBottomSheet(
+            match = tournament.asRegistrationMatch(),
+            currentUser = registrationState.currentUser,
+            onDismiss = { selectedTournament = null },
+            onRegister = { data ->
+                registrationViewModel.registerForTournament(tournament, data)
+                selectedTournament = null
+            }
+        )
+    }
 }
 
 // ── Tournament Event Card — Full-width with hero style ───────────────────────
@@ -186,6 +205,9 @@ fun EventsScreen(
 @Composable
 private fun TournamentEventCard(
     tournament: Tournament,
+    isRegistered: Boolean,
+    isAdmin: Boolean,
+    onRegister: () -> Unit,
     onClick: () -> Unit
 ) {
     Box(
@@ -305,10 +327,44 @@ private fun TournamentEventCard(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                Button(
+                    onClick = onRegister,
+                    enabled = !isAdmin && !isRegistered && tournament.status == TournamentStatus.REGISTRATION,
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = GnitsOrangeDark,
+                        disabledContainerColor = Color.White.copy(alpha = 0.35f),
+                        disabledContentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (isRegistered) Icons.Filled.CheckCircle else Icons.Filled.GroupAdd,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (isAdmin) "Admin View" else if (isRegistered) "Registered" else "Register")
+                }
             }
         }
     }
 }
+
+private fun Tournament.asRegistrationMatch(): Match = Match(
+    id = id,
+    tournamentId = id,
+    tournamentName = name,
+    sportType = sport,
+    teamA = name,
+    teamB = "Registration",
+    venue = venue,
+    maxSquadSize = maxTeams,
+    allowedDepartments = allowedDepartments,
+    allowedYears = allowedYears,
+    eligibilityText = eligibilityText
+)
 
 // ── Upcoming Event Card ──────────────────────────────────────────────────────
 

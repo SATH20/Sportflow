@@ -114,6 +114,15 @@ data class HomeUiState(
     val error: String? = null
 )
 
+data class RoleHomeUiState(
+    val myRegistrations: List<Registration> = emptyList(),
+    val pendingRegistrations: List<Registration> = emptyList(),
+    val allMatches: List<Match> = emptyList(),
+    val notifications: List<NotificationItem> = emptyList(),
+    val unseenNotificationCount: Int = 0,
+    val isLoading: Boolean = true
+)
+
 @HiltViewModel
 class HomeViewModel @Inject constructor(
     private val repository: SportFlowRepository
@@ -154,6 +163,42 @@ class HomeViewModel @Inject constructor(
                     _uiState.update { it.copy(tournaments = tournaments) }
                 }
             } catch (_: Exception) {}
+        }
+    }
+}
+
+@HiltViewModel
+class RoleHomeViewModel @Inject constructor(
+    private val repository: SportFlowRepository
+) : ViewModel() {
+    private val _uiState = MutableStateFlow(RoleHomeUiState())
+    val uiState: StateFlow<RoleHomeUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.observeMyRegistrations().collect { registrations ->
+                _uiState.update { it.copy(myRegistrations = registrations, isLoading = false) }
+            }
+        }
+        viewModelScope.launch {
+            repository.observePendingRegistrations().collect { registrations ->
+                _uiState.update { it.copy(pendingRegistrations = registrations) }
+            }
+        }
+        viewModelScope.launch {
+            repository.getAllMatches().collect { matches ->
+                _uiState.update { it.copy(allMatches = matches) }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeNotifications().collect { notifications ->
+                _uiState.update {
+                    it.copy(
+                        notifications = notifications.take(12),
+                        unseenNotificationCount = notifications.count { notification -> !notification.seen }
+                    )
+                }
+            }
         }
     }
 }
@@ -305,6 +350,15 @@ data class CreateMatchForm(
     val round: String = ""
 )
 
+data class CreateTournamentForm(
+    val name: String = "",
+    val sport: String = "",
+    val venue: String = "",
+    val maxTeams: String = "16",
+    val prizePool: String = "",
+    val eligibilityText: String = "All GNITS students"
+)
+
 @HiltViewModel
 class AdminViewModel @Inject constructor(
     private val repository: SportFlowRepository
@@ -315,6 +369,9 @@ class AdminViewModel @Inject constructor(
 
     private val _matchForm = MutableStateFlow(CreateMatchForm())
     val matchForm: StateFlow<CreateMatchForm> = _matchForm.asStateFlow()
+
+    private val _tournamentForm = MutableStateFlow(CreateTournamentForm())
+    val tournamentForm: StateFlow<CreateTournamentForm> = _tournamentForm.asStateFlow()
 
     /** Fixture engine configuration form state */
     private val _fixtureConfig = MutableStateFlow(FixtureConfig())
@@ -383,33 +440,39 @@ class AdminViewModel @Inject constructor(
 
     /** Create a new match from admin form data */
     fun createMatch() {
-        val form = _matchForm.value
-        if (form.sportType.isBlank() || form.teamA.isBlank() || form.teamB.isBlank() || form.venue.isBlank()) {
-            _uiState.update { it.copy(error = "Please fill in all required fields") }
+        _uiState.update { it.copy(error = "Admins can create tournaments only. Generate matches after approving tournament registrations.") }
+    }
+
+    fun updateTournamentForm(form: CreateTournamentForm) {
+        _tournamentForm.update { form }
+    }
+
+    fun createTournament() {
+        val form = _tournamentForm.value
+        if (form.name.isBlank() || form.sport.isBlank() || form.venue.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter tournament name, sport, and venue") }
             return
         }
-
         viewModelScope.launch {
             _uiState.update { it.copy(isCreatingMatch = true) }
             try {
-                val match = Match(
-                    sportType = form.sportType,
-                    teamA = form.teamA,
-                    teamB = form.teamB,
-                    teamADepartment = form.teamADepartment,
-                    teamBDepartment = form.teamBDepartment,
-                    venue = form.venue,
-                    tournamentName = form.tournamentName,
-                    round = form.round,
-                    scheduledTime = Timestamp.now(),
-                    status = MatchStatus.SCHEDULED
+                repository.createTournament(
+                    Tournament(
+                        name = form.name.trim(),
+                        sport = form.sport,
+                        venue = form.venue,
+                        maxTeams = form.maxTeams.toIntOrNull()?.coerceAtLeast(2) ?: 16,
+                        prizePool = form.prizePool,
+                        eligibilityText = form.eligibilityText.ifBlank { "All GNITS students" },
+                        status = TournamentStatus.REGISTRATION,
+                        startDate = Timestamp.now()
+                    )
                 )
-                repository.createMatch(match)
-                _matchForm.update { CreateMatchForm() } // Reset form
+                _tournamentForm.update { CreateTournamentForm() }
                 _uiState.update {
                     it.copy(
                         isCreatingMatch = false,
-                        successMessage = "Match created: ${form.teamA} vs ${form.teamB}"
+                        successMessage = "Tournament created: ${form.name}"
                     )
                 }
             } catch (e: Exception) {
@@ -863,6 +926,59 @@ class AdminViewModel @Inject constructor(
         }
     }
 
+    fun generateFixturesFromApprovedRegistrations(matchId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGeneratingBracket = true, error = null) }
+            try {
+                val created = repository.generateFixturesFromApprovedRegistrations(matchId)
+                _uiState.update {
+                    it.copy(
+                        isGeneratingBracket = false,
+                        successMessage = "$created fixture(s) generated from approved registrations"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isGeneratingBracket = false, error = e.message ?: "Fixture generation failed")
+                }
+            }
+        }
+    }
+
+    fun generateFixturesFromApprovedTournamentRegistrations(tournamentId: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGeneratingBracket = true, error = null) }
+            try {
+                val created = repository.generateFixturesFromApprovedTournamentRegistrations(tournamentId)
+                _uiState.update {
+                    it.copy(
+                        isGeneratingBracket = false,
+                        successMessage = "$created fixture(s) generated from approved tournament registrations"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isGeneratingBracket = false, error = e.message ?: "Fixture generation failed")
+                }
+            }
+        }
+    }
+
+    fun postAnnouncement(title: String, message: String, category: AnnouncementCategory) {
+        if (title.isBlank() || message.isBlank()) {
+            _uiState.update { it.copy(error = "Announcement title and message are required") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                repository.createAnnouncement(title.trim(), message.trim(), category)
+                _uiState.update { it.copy(successMessage = "Announcement posted") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message) }
+            }
+        }
+    }
+
     fun markRegistrationAsSeen(registrationId: String) {
         viewModelScope.launch {
             try {
@@ -942,6 +1058,7 @@ data class RegistrationUiState(
      * deletion (e.g. admin or cancellation) reflects immediately across ALL screens.
      */
     val registeredMatchIds: Set<String> = emptySet(),
+    val registeredTournamentIds: Set<String> = emptySet(),
     /** matchId → actively processing (button shows spinner) */
     val loadingMatchIds: Set<String> = emptySet(),
     /** Current user profile for pre-filling registration forms */
@@ -998,3 +1115,37 @@ class ScorecardViewModel @Inject constructor(
 
 // NOTE: NotificationUiState is defined in NotificationViewModel.kt.
 // It is not re-declared here to avoid duplicate class compilation errors.
+
+data class UpdatesUiState(
+    val announcements: List<Announcement> = emptyList(),
+    val lastOpenedAt: Timestamp? = null,
+    val isLoading: Boolean = true,
+    val error: String? = null
+)
+
+@HiltViewModel
+class UpdatesViewModel @Inject constructor(
+    private val repository: SportFlowRepository
+) : ViewModel() {
+    private val _uiState = MutableStateFlow(UpdatesUiState())
+    val uiState: StateFlow<UpdatesUiState> = _uiState.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            repository.observeAnnouncements().collect { announcements ->
+                _uiState.update { it.copy(announcements = announcements, isLoading = false) }
+            }
+        }
+        viewModelScope.launch {
+            repository.observeLastUpdatesOpenedAt().collect { ts ->
+                _uiState.update { it.copy(lastOpenedAt = ts) }
+            }
+        }
+    }
+
+    fun markOpened() {
+        viewModelScope.launch {
+            repository.markUpdatesOpened()
+        }
+    }
+}

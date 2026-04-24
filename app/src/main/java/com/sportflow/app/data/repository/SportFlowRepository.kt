@@ -38,6 +38,7 @@ class SportFlowRepository @Inject constructor(
         const val GNITS_REGISTRATIONS    = "gnits_registrations"
         /** Per-user notification sub-collection under gnits_users/{uid} */
         const val USER_NOTIFICATIONS     = "notifications"
+        const val ANNOUNCEMENTS_COLLECTION = "announcements"
 
         // FCM topics — must match what Cloud Functions publishes to
         const val FCM_TOPIC_ALL         = "gnits_sports_all"
@@ -45,6 +46,7 @@ class SportFlowRepository @Inject constructor(
         const val FCM_TOPIC_MATCH_START = "gnits_match_start"
         const val FCM_TOPIC_TOURNAMENT  = "gnits_tournaments"
         const val FCM_TOPIC_PAYMENT     = "gnits_payment"
+        const val FCM_TOPIC_ADMIN       = "gnits_admins"
     }
 
     // ── Matches — Real-time Listeners ────────────────────────────────────────
@@ -426,6 +428,36 @@ class SportFlowRepository @Inject constructor(
         awaitClose { listener.remove() }
     }
 
+    suspend fun createTournament(tournament: Tournament): String {
+        val data = hashMapOf(
+            "name" to tournament.name,
+            "sport" to tournament.sport,
+            "status" to TournamentStatus.REGISTRATION.name,
+            "startDate" to tournament.startDate,
+            "endDate" to tournament.endDate,
+            "teams" to emptyList<String>(),
+            "bracketGenerated" to false,
+            "entryFee" to tournament.entryFee,
+            "prizePool" to tournament.prizePool,
+            "maxTeams" to tournament.maxTeams,
+            "venue" to tournament.venue,
+            "eligibilityText" to tournament.eligibilityText,
+            "deptQuota" to tournament.deptQuota,
+            "allowedDepartments" to tournament.allowedDepartments,
+            "allowedYears" to tournament.allowedYears,
+            "createdBy" to (auth.currentUser?.uid ?: ""),
+            "createdAt" to com.google.firebase.Timestamp.now()
+        )
+        val ref = firestore.collection(TOURNAMENTS_COLLECTION).add(data).await()
+        createAnnouncement(
+            title = "Tournament Open",
+            message = "${tournament.name} is now open for captain-led registration.",
+            category = AnnouncementCategory.GENERAL,
+            tournamentId = ref.id
+        )
+        return ref.id
+    }
+
     fun getBracket(tournamentId: String): Flow<List<BracketNode>> = callbackFlow {
         val listener = firestore.collection(TOURNAMENTS_COLLECTION)
             .document(tournamentId)
@@ -610,7 +642,12 @@ class SportFlowRepository @Inject constructor(
     }
 
     suspend fun signIn(email: String, password: String) {
-        auth.signInWithEmailAndPassword(email, password).await()
+        val result = auth.signInWithEmailAndPassword(email, password).await()
+        result.user?.let { user ->
+            val profile = firestore.collection(USERS_COLLECTION).document(user.uid).get().await()
+                .toObject(SportUser::class.java)
+            syncNotificationTopicsForUser(profile)
+        }
     }
 
     /** Signup with GNITS student identity — collects roll number and department */
@@ -639,6 +676,7 @@ class SportFlowRepository @Inject constructor(
             }
             // Subscribe to general sports topic
             subscribeToTopic("gnits_sports_all")
+            syncNotificationTopicsForUser(sportUser)
         }
     }
 
@@ -692,6 +730,24 @@ class SportFlowRepository @Inject constructor(
         if (enabled) subscribeToTopic(category) else unsubscribeFromTopic(category)
     }
 
+    private fun syncNotificationTopicsForUser(user: SportUser?) {
+        GnitsDepartment.entries.forEach { dept ->
+            unsubscribeFromTopic("dept_${dept.name}")
+        }
+        unsubscribeFromTopic(FCM_TOPIC_ADMIN)
+        subscribeToTopic(FCM_TOPIC_ALL)
+        subscribeToTopic(FCM_TOPIC_MATCH_START)
+        subscribeToTopic(FCM_TOPIC_SCORES)
+        subscribeToTopic(FCM_TOPIC_TOURNAMENT)
+        subscribeToTopic(FCM_TOPIC_PAYMENT)
+        when (user?.role) {
+            UserRole.ADMIN -> subscribeToTopic(FCM_TOPIC_ADMIN)
+            else -> if (!user?.department.isNullOrBlank()) {
+                subscribeToTopic("dept_${user!!.department}")
+            }
+        }
+    }
+
     /**
      * Write a notification trigger to Firestore.
      * Firebase Cloud Functions (HTTP trigger) reads this and sends to FCM topic.
@@ -705,6 +761,16 @@ class SportFlowRepository @Inject constructor(
         topic: String
     ) {
         try {
+            val dedupeKey = "$type|$matchId|$topic|${body.hashCode()}"
+            val existingUnseen = firestore.collection(NOTIFICATION_TRIGGERS)
+                .whereEqualTo("dedupeKey", dedupeKey)
+                .whereEqualTo("seen", false)
+                .limit(1)
+                .get()
+                .await()
+
+            if (!existingUnseen.isEmpty) return
+
             firestore.collection(NOTIFICATION_TRIGGERS).add(
                 mapOf(
                     "type"      to type,
@@ -712,6 +778,8 @@ class SportFlowRepository @Inject constructor(
                     "body"      to body,
                     "matchId"   to matchId,
                     "topic"     to topic,
+                    "dedupeKey" to dedupeKey,
+                    "seen"      to false,
                     "sentAt"    to com.google.firebase.Timestamp.now(),
                     "processed" to false
                 )
@@ -884,6 +952,271 @@ class SportFlowRepository @Inject constructor(
         }
     }
 
+    suspend fun registerForMatch(
+        match: com.sportflow.app.data.model.Match,
+        payload: RegistrationPayload
+    ) {
+        val user = auth.currentUser
+            ?: throw IllegalStateException("User not authenticated")
+
+        val userRef = firestore.collection(USERS_COLLECTION).document(user.uid)
+        val userSnap = userRef.get().await()
+        val role = userSnap.getString("role") ?: UserRole.PLAYER.name
+        if (role.equals(UserRole.ADMIN.name, ignoreCase = true)) {
+            throw IllegalArgumentException("Admins cannot register teams or player entries")
+        }
+
+        val kind = payload.registrationKind
+        val isBadminton = SportType.fromString(match.sportType) == SportType.BADMINTON
+        val requiresTeamRoster = kind == RegistrationKind.TEAM
+        val requiresPair = kind == RegistrationKind.BADMINTON_DOUBLES
+
+        if (requiresTeamRoster && payload.teamName.isBlank()) {
+            throw IllegalArgumentException("Team name is required")
+        }
+        if (requiresTeamRoster && payload.roster.isEmpty()) {
+            throw IllegalArgumentException("Add at least one player to the squad roster")
+        }
+        if (requiresTeamRoster && payload.roster.any { it.name.isBlank() || it.rollNumber.isBlank() || it.role.isBlank() }) {
+            throw IllegalArgumentException("Every squad player needs a name, roll number, and role")
+        }
+        if (requiresPair && (payload.partnerName.isBlank() || payload.partnerRollNumber.isBlank())) {
+            throw IllegalArgumentException("Doubles registration requires partner name and roll number")
+        }
+        if (isBadminton && kind == RegistrationKind.TEAM) {
+            throw IllegalArgumentException("Badminton supports singles or doubles pair registration")
+        }
+
+        val matchRef = firestore.collection(MATCHES_COLLECTION).document(match.id)
+        val regRef = matchRef.collection(REGISTRATIONS_COLLECTION).document(user.uid)
+        val bridgeRef = firestore.collection(GNITS_REGISTRATIONS).document("${user.uid}_${match.id}")
+        val userDept = payload.department.ifBlank { userSnap.getString("department") ?: "" }
+        val userYear = payload.yearOfStudy.ifBlank { userSnap.getString("yearOfStudy") ?: "" }
+
+        if (match.allowedDepartments.isNotEmpty() &&
+            userDept.isNotBlank() &&
+            match.allowedDepartments.none { it.equals(userDept, ignoreCase = true) }
+        ) {
+            throw IllegalArgumentException("You are not eligible for this department-restricted event")
+        }
+        if (match.allowedYears.isNotEmpty() &&
+            userYear.isNotBlank() &&
+            match.allowedYears.none { it.equals(userYear, ignoreCase = true) }
+        ) {
+            throw IllegalArgumentException("You are not eligible for this year-restricted event")
+        }
+
+        val userName = userSnap.getString("displayName") ?: user.displayName ?: payload.captainName
+        val rollNumber = payload.rollNumber.ifBlank { userSnap.getString("rollNumber") ?: "" }
+        val email = payload.email.ifBlank { user.email ?: userSnap.getString("email") ?: "" }
+        val fixtureUnitName = when (kind) {
+            RegistrationKind.TEAM -> payload.teamName
+            RegistrationKind.BADMINTON_DOUBLES -> "$userName / ${payload.partnerName}"
+            RegistrationKind.BADMINTON_SINGLES -> userName
+            RegistrationKind.INDIVIDUAL -> userName
+        }
+        val matchName = "${match.teamA} vs ${match.teamB}"
+        var newSquadCount = 0
+
+        val registration = Registration(
+            id = bridgeRef.id,
+            uid = user.uid,
+            matchId = match.id,
+            tournamentId = match.tournamentId,
+            userName = userName,
+            email = email,
+            department = userDept,
+            yearOfStudy = userYear,
+            rollNumber = rollNumber,
+            status = RegistrationStatus.PENDING,
+            registeredAt = com.google.firebase.Timestamp.now(),
+            seen = false,
+            squadName = payload.teamName,
+            captainName = payload.captainName.ifBlank { userName },
+            captainPhone = payload.captainPhone,
+            squadSize = when {
+                kind == RegistrationKind.TEAM -> payload.roster.size
+                kind == RegistrationKind.BADMINTON_DOUBLES -> 2
+                else -> 1
+            },
+            sportRole = payload.sportRole,
+            sportType = match.sportType,
+            matchName = matchName,
+            registrationKind = kind,
+            teamName = payload.teamName,
+            roster = payload.roster,
+            partnerName = payload.partnerName,
+            partnerRollNumber = payload.partnerRollNumber,
+            partnerRole = payload.partnerRole,
+            fixtureUnitName = fixtureUnitName
+        )
+
+        firestore.runTransaction { tx ->
+            val matchSnap = tx.get(matchRef)
+            if (tx.get(regRef).exists()) {
+                throw IllegalArgumentException("Already registered for this event")
+            }
+
+            val maxSquad = matchSnap.getLong("maxSquadSize")?.toInt() ?: 0
+            val curSquad = matchSnap.getLong("currentSquadCount")?.toInt() ?: 0
+            val maxReg = matchSnap.getLong("maxRegistrations")?.toInt() ?: 0
+            val curCount = matchSnap.getLong("registrationCount")?.toInt() ?: 0
+            val effectiveMax = if (maxSquad > 0) maxSquad else maxReg
+            val effectiveCur = if (maxSquad > 0) curSquad else curCount
+
+            if (effectiveMax > 0 && effectiveCur >= effectiveMax) {
+                throw IllegalArgumentException("Registration capacity is full")
+            }
+
+            tx.set(regRef, registration.copy(id = user.uid))
+            tx.set(bridgeRef, registration)
+            tx.update(matchRef, "currentSquadCount", FieldValue.increment(1))
+            tx.update(matchRef, "registrationCount", FieldValue.increment(1))
+            newSquadCount = effectiveCur + 1
+        }.await()
+
+        pushNotificationTrigger(
+            type = "admin_registration_pending",
+            title = "New ${kind.name.lowercase().replace('_', ' ')} registration",
+            body = "$fixtureUnitName is waiting for approval in $matchName",
+            matchId = match.id,
+            topic = FCM_TOPIC_ADMIN
+        )
+
+        val maxSquadFinal = match.maxSquadSize.takeIf { it > 0 } ?: match.maxRegistrations
+        if (maxSquadFinal > 0 && newSquadCount >= maxSquadFinal) {
+            pushNotificationTrigger(
+                type = "squad_closed",
+                title = "Registration Full - ${match.sportType}",
+                body = "Registrations for $matchName are now closed.",
+                matchId = match.id,
+                topic = FCM_TOPIC_ALL
+            )
+        }
+    }
+
+    suspend fun registerForTournament(
+        tournament: Tournament,
+        payload: RegistrationPayload
+    ) {
+        val user = auth.currentUser
+            ?: throw IllegalStateException("User not authenticated")
+
+        val userRef = firestore.collection(USERS_COLLECTION).document(user.uid)
+        val userSnap = userRef.get().await()
+        val role = userSnap.getString("role") ?: UserRole.PLAYER.name
+        if (role.equals(UserRole.ADMIN.name, ignoreCase = true)) {
+            throw IllegalArgumentException("Admins can create tournaments only; they cannot register teams")
+        }
+
+        val sport = SportType.fromString(tournament.sport)
+        val kind = payload.registrationKind
+        val requiresTeamRoster = sport != SportType.BADMINTON && kind == RegistrationKind.TEAM
+        val requiresPair = sport == SportType.BADMINTON && kind == RegistrationKind.BADMINTON_DOUBLES
+
+        if (sport == SportType.BADMINTON && kind == RegistrationKind.TEAM) {
+            throw IllegalArgumentException("Badminton tournaments accept singles or doubles pair entries")
+        }
+        if (sport != SportType.BADMINTON && kind != RegistrationKind.TEAM) {
+            throw IllegalArgumentException("This tournament requires a captain-led team entry")
+        }
+        if (requiresTeamRoster && payload.teamName.isBlank()) {
+            throw IllegalArgumentException("Team name is required")
+        }
+        if (requiresTeamRoster && payload.roster.isEmpty()) {
+            throw IllegalArgumentException("Add at least one player to the squad roster")
+        }
+        if (requiresTeamRoster && payload.roster.any { it.name.isBlank() || it.rollNumber.isBlank() || it.role.isBlank() }) {
+            throw IllegalArgumentException("Every squad player needs a name, roll number, and role")
+        }
+        if (requiresPair && (payload.partnerName.isBlank() || payload.partnerRollNumber.isBlank())) {
+            throw IllegalArgumentException("Doubles registration requires partner name and roll number")
+        }
+
+        val tournamentRef = firestore.collection(TOURNAMENTS_COLLECTION).document(tournament.id)
+        val regRef = tournamentRef.collection(REGISTRATIONS_COLLECTION).document(user.uid)
+        val bridgeRef = firestore.collection(GNITS_REGISTRATIONS).document("${user.uid}_${tournament.id}")
+        val userDept = payload.department.ifBlank { userSnap.getString("department") ?: "" }
+        val userYear = payload.yearOfStudy.ifBlank { userSnap.getString("yearOfStudy") ?: "" }
+
+        if (tournament.allowedDepartments.isNotEmpty() &&
+            userDept.isNotBlank() &&
+            tournament.allowedDepartments.none { it.equals(userDept, ignoreCase = true) }
+        ) {
+            throw IllegalArgumentException("You are not eligible for this department-restricted tournament")
+        }
+        if (tournament.allowedYears.isNotEmpty() &&
+            userYear.isNotBlank() &&
+            tournament.allowedYears.none { it.equals(userYear, ignoreCase = true) }
+        ) {
+            throw IllegalArgumentException("You are not eligible for this year-restricted tournament")
+        }
+
+        val userName = userSnap.getString("displayName") ?: user.displayName ?: payload.captainName
+        val rollNumber = payload.rollNumber.ifBlank { userSnap.getString("rollNumber") ?: "" }
+        val email = payload.email.ifBlank { user.email ?: userSnap.getString("email") ?: "" }
+        val fixtureUnitName = when (kind) {
+            RegistrationKind.TEAM -> payload.teamName
+            RegistrationKind.BADMINTON_DOUBLES -> "$userName / ${payload.partnerName}"
+            RegistrationKind.BADMINTON_SINGLES -> userName
+            RegistrationKind.INDIVIDUAL -> userName
+        }
+        val registration = Registration(
+            id = bridgeRef.id,
+            uid = user.uid,
+            matchId = "",
+            tournamentId = tournament.id,
+            userName = userName,
+            email = email,
+            department = userDept,
+            yearOfStudy = userYear,
+            rollNumber = rollNumber,
+            status = RegistrationStatus.PENDING,
+            registeredAt = com.google.firebase.Timestamp.now(),
+            seen = false,
+            squadName = payload.teamName,
+            captainName = payload.captainName.ifBlank { userName },
+            captainPhone = payload.captainPhone,
+            squadSize = when {
+                kind == RegistrationKind.TEAM -> payload.roster.size
+                kind == RegistrationKind.BADMINTON_DOUBLES -> 2
+                else -> 1
+            },
+            sportRole = payload.sportRole,
+            sportType = tournament.sport,
+            matchName = tournament.name,
+            registrationKind = kind,
+            teamName = payload.teamName,
+            roster = payload.roster,
+            partnerName = payload.partnerName,
+            partnerRollNumber = payload.partnerRollNumber,
+            partnerRole = payload.partnerRole,
+            fixtureUnitName = fixtureUnitName
+        )
+
+        firestore.runTransaction { tx ->
+            val tournamentSnap = tx.get(tournamentRef)
+            if (tx.get(regRef).exists()) {
+                throw IllegalArgumentException("Already registered for this tournament")
+            }
+            val maxTeams = tournamentSnap.getLong("maxTeams")?.toInt() ?: 0
+            val currentTeams = (tournamentSnap.get("teams") as? List<*>)?.size ?: 0
+            if (maxTeams > 0 && currentTeams >= maxTeams) {
+                throw IllegalArgumentException("Tournament registration capacity is full")
+            }
+            tx.set(regRef, registration.copy(id = user.uid))
+            tx.set(bridgeRef, registration)
+        }.await()
+
+        pushNotificationTrigger(
+            type = "admin_registration_pending",
+            title = "New ${kind.name.lowercase().replace('_', ' ')} registration",
+            body = "$fixtureUnitName is waiting for approval in ${tournament.name}",
+            matchId = "",
+            topic = FCM_TOPIC_ADMIN
+        )
+    }
+
     /**
      * Cancel an existing registration.
      * - Deletes the registration doc
@@ -1023,6 +1356,29 @@ class SportFlowRepository @Inject constructor(
                 }
                 val ids = snapshot?.documents
                     ?.mapNotNull { it.getString("matchId") }
+                    ?.toSet() ?: emptySet()
+                trySend(ids)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    fun observeMyRegisteredTournamentIds(): Flow<Set<String>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptySet())
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("uid", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptySet())
+                    return@addSnapshotListener
+                }
+                val ids = snapshot?.documents
+                    ?.mapNotNull { it.getString("tournamentId") }
+                    ?.filter { it.isNotBlank() }
                     ?.toSet() ?: emptySet()
                 trySend(ids)
             }
@@ -1188,6 +1544,13 @@ class SportFlowRepository @Inject constructor(
                 matchId = edit.matchId,
                 topic = FCM_TOPIC_ALL
             )
+            createAnnouncement(
+                title = if (edit.newVenue != null) "Venue Shift" else if (edit.newScheduledTime != null) "Schedule Change" else "Fixture Updated",
+                message = if (edit.newVenue != null) "$teamA vs $teamB shifted to $venue." else "$teamA vs $teamB fixture details were updated.",
+                category = if (edit.newVenue != null) AnnouncementCategory.VENUE_SHIFT else if (edit.newScheduledTime != null) AnnouncementCategory.SCHEDULE_CHANGE else AnnouncementCategory.FIXTURE_UPDATE,
+                matchId = edit.matchId,
+                tournamentId = doc.getString("tournamentId") ?: ""
+            )
         }
     }
 
@@ -1198,6 +1561,72 @@ class SportFlowRepository @Inject constructor(
     /**
      * Real-time stream of all registrations (Admin Data Bridge).
      */
+    fun observeAnnouncements(): Flow<List<Announcement>> = callbackFlow {
+        val listener = firestore.collection(ANNOUNCEMENTS_COLLECTION)
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    close(error)
+                    return@addSnapshotListener
+                }
+                val updates = snapshot?.documents?.mapNotNull {
+                    it.toObject(Announcement::class.java)?.copy(id = it.id)
+                } ?: emptyList()
+                trySend(updates)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun createAnnouncement(
+        title: String,
+        message: String,
+        category: AnnouncementCategory = AnnouncementCategory.GENERAL,
+        matchId: String = "",
+        tournamentId: String = ""
+    ): String {
+        val data = hashMapOf(
+            "title" to title,
+            "message" to message,
+            "category" to category.name,
+            "matchId" to matchId,
+            "tournamentId" to tournamentId,
+            "createdAt" to com.google.firebase.Timestamp.now(),
+            "createdBy" to (auth.currentUser?.uid ?: "")
+        )
+        val ref = firestore.collection(ANNOUNCEMENTS_COLLECTION).add(data).await()
+        pushNotificationTrigger(
+            type = "announcement",
+            title = title,
+            body = message,
+            matchId = matchId,
+            topic = FCM_TOPIC_ALL
+        )
+        return ref.id
+    }
+
+    fun observeLastUpdatesOpenedAt(): Flow<com.google.firebase.Timestamp?> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(null)
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collection(USERS_COLLECTION)
+            .document(uid)
+            .addSnapshotListener { snapshot, _ ->
+                trySend(snapshot?.getTimestamp("lastUpdatesOpenedAt"))
+            }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun markUpdatesOpened() {
+        val uid = auth.currentUser?.uid ?: return
+        firestore.collection(USERS_COLLECTION)
+            .document(uid)
+            .update("lastUpdatesOpenedAt", com.google.firebase.Timestamp.now())
+            .await()
+    }
+
     fun observeAllRegistrations(): Flow<List<Registration>> = callbackFlow {
         val listener = firestore.collection(GNITS_REGISTRATIONS)
             .orderBy("registeredAt", Query.Direction.DESCENDING)
@@ -1244,24 +1673,58 @@ class SportFlowRepository @Inject constructor(
      * Admin accepts a registration.
      */
     suspend fun acceptRegistration(registrationId: String) {
-        firestore.collection(GNITS_REGISTRATIONS)
-            .document(registrationId)
+        val docRef = firestore.collection(GNITS_REGISTRATIONS).document(registrationId)
+        val doc = docRef.get().await()
+        if (!doc.exists()) return
+
+        val matchId = doc.getString("matchId") ?: ""
+        val tournamentId = doc.getString("tournamentId") ?: ""
+        val userId = doc.getString("uid") ?: ""
+        val matchName = doc.getString("matchName") ?: ""
+        val fixtureUnitName = doc.getString("fixtureUnitName")
+            ?: doc.getString("teamName")
+            ?: doc.getString("userName")
+            ?: ""
+
+        docRef
             .update(mapOf(
                 "status" to RegistrationStatus.CONFIRMED.name,
                 "seen" to true
             ))
             .await()
 
-        // Send confirmation notification to student
-        val doc = firestore.collection(GNITS_REGISTRATIONS).document(registrationId).get().await()
-        val matchName = doc.getString("matchName") ?: ""
-        val userId = doc.getString("uid") ?: ""
+        if (matchId.isNotBlank() && userId.isNotBlank()) {
+            try {
+                firestore.collection(MATCHES_COLLECTION)
+                    .document(matchId)
+                    .collection(REGISTRATIONS_COLLECTION)
+                    .document(userId)
+                    .update("status", RegistrationStatus.CONFIRMED.name)
+                    .await()
+            } catch (_: Exception) {}
+        }
+        if (tournamentId.isNotBlank() && userId.isNotBlank()) {
+            try {
+                firestore.collection(TOURNAMENTS_COLLECTION)
+                    .document(tournamentId)
+                    .collection(REGISTRATIONS_COLLECTION)
+                    .document(userId)
+                    .update("status", RegistrationStatus.CONFIRMED.name)
+                    .await()
+                if (fixtureUnitName.isNotBlank()) {
+                    firestore.collection(TOURNAMENTS_COLLECTION)
+                        .document(tournamentId)
+                        .update("teams", FieldValue.arrayUnion(fixtureUnitName))
+                        .await()
+                }
+            } catch (_: Exception) {}
+        }
         
         pushNotificationTrigger(
             type = "registration_accepted",
             title = "✅ Registration Accepted",
             body = "Your registration for $matchName has been approved!",
-            matchId = doc.getString("matchId") ?: "",
+            matchId = matchId,
             topic = "user_$userId"
         )
     }
@@ -1278,7 +1741,8 @@ class SportFlowRepository @Inject constructor(
         if (!regDoc.exists()) return
 
         val userId = regDoc.getString("uid") ?: return
-        val matchId = regDoc.getString("matchId") ?: return
+        val matchId = regDoc.getString("matchId") ?: ""
+        val tournamentId = regDoc.getString("tournamentId") ?: ""
         val matchName = regDoc.getString("matchName") ?: ""
 
         // Delete from gnits_registrations (Admin Data Bridge)
@@ -1288,7 +1752,7 @@ class SportFlowRepository @Inject constructor(
             .await()
 
         // Delete from match sub-collection if it exists
-        try {
+        if (matchId.isNotBlank()) try {
             firestore.collection(MATCHES_COLLECTION)
                 .document(matchId)
                 .collection(REGISTRATIONS_COLLECTION)
@@ -1298,16 +1762,26 @@ class SportFlowRepository @Inject constructor(
         } catch (_: Exception) {
             // Non-critical if sub-collection document is already gone
         }
+        if (tournamentId.isNotBlank()) try {
+            firestore.collection(TOURNAMENTS_COLLECTION)
+                .document(tournamentId)
+                .collection(REGISTRATIONS_COLLECTION)
+                .document(userId)
+                .delete()
+                .await()
+        } catch (_: Exception) {}
 
         // Decrement counters atomically (floor 0 — read-modify-write)
-        val matchRef = firestore.collection(MATCHES_COLLECTION).document(matchId)
-        val matchSnap = matchRef.get().await()
-        val curSquad = matchSnap.getLong("currentSquadCount")?.toInt() ?: 0
-        val curReg   = matchSnap.getLong("registrationCount")?.toInt() ?: 0
-        val updates = mutableMapOf<String, Any>()
-        if (curSquad > 0) updates["currentSquadCount"] = FieldValue.increment(-1)
-        if (curReg > 0)   updates["registrationCount"] = FieldValue.increment(-1)
-        if (updates.isNotEmpty()) matchRef.update(updates).await()
+        val matchRef = if (matchId.isNotBlank()) firestore.collection(MATCHES_COLLECTION).document(matchId) else null
+        if (matchRef != null) {
+            val matchSnap = matchRef.get().await()
+            val curSquad = matchSnap.getLong("currentSquadCount")?.toInt() ?: 0
+            val curReg   = matchSnap.getLong("registrationCount")?.toInt() ?: 0
+            val updates = mutableMapOf<String, Any>()
+            if (curSquad > 0) updates["currentSquadCount"] = FieldValue.increment(-1)
+            if (curReg > 0)   updates["registrationCount"] = FieldValue.increment(-1)
+            if (updates.isNotEmpty()) matchRef.update(updates).await()
+        }
 
         // Notify student of denial
         pushNotificationTrigger(
@@ -1319,10 +1793,10 @@ class SportFlowRepository @Inject constructor(
         )
 
         // Check if spot just opened in a previously full squad
-        val freshSnap = matchRef.get().await()
-        val maxSquad = freshSnap.getLong("maxSquadSize")?.toInt() ?: 0
-        val currentCount = freshSnap.getLong("currentSquadCount")?.toInt() ?: 0
-        if (maxSquad > 0 && currentCount == maxSquad - 1) {
+        val freshSnap = matchRef?.get()?.await()
+        val maxSquad = freshSnap?.getLong("maxSquadSize")?.toInt() ?: 0
+        val currentCount = freshSnap?.getLong("currentSquadCount")?.toInt() ?: 0
+        if (matchRef != null && maxSquad > 0 && currentCount == maxSquad - 1) {
             pushNotificationTrigger(
                 type = "spot_opened",
                 title = "🟢 Spot Available",
@@ -1336,6 +1810,135 @@ class SportFlowRepository @Inject constructor(
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // PLAYER SCORECARDS — Sport-specific performance tracking
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    suspend fun generateFixturesFromApprovedRegistrations(matchId: String): Int {
+        val seedMatchDoc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val seedMatch = seedMatchDoc.toObject(Match::class.java)?.copy(id = seedMatchDoc.id)
+            ?: throw IllegalArgumentException("Match not found")
+
+        val approved = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("matchId", matchId)
+            .whereEqualTo("status", RegistrationStatus.CONFIRMED.name)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { it.toObject(Registration::class.java)?.copy(id = it.id) }
+
+        val units = if (SportType.fromString(seedMatch.sportType) == SportType.BADMINTON) {
+            val doubles = approved.filter {
+                it.registrationKind == RegistrationKind.BADMINTON_DOUBLES &&
+                    it.partnerName.isNotBlank() &&
+                    it.partnerRollNumber.isNotBlank()
+            }
+            val singles = approved.filter {
+                it.registrationKind == RegistrationKind.BADMINTON_SINGLES ||
+                    it.registrationKind == RegistrationKind.INDIVIDUAL
+            }
+            when {
+                doubles.size >= 2 -> doubles
+                singles.size >= 2 -> singles
+                else -> emptyList()
+            }
+        } else {
+            approved.filter { it.registrationKind == RegistrationKind.TEAM || it.teamName.isNotBlank() }
+        }
+
+        if (units.size < 2) {
+            throw IllegalArgumentException("Need at least two approved fixture units")
+        }
+
+        var created = 0
+        units.chunked(2).forEachIndexed { index, pair ->
+            if (pair.size < 2) return@forEachIndexed
+            val teamA = pair[0].fixtureUnitName.ifBlank { pair[0].teamName.ifBlank { pair[0].userName } }
+            val teamB = pair[1].fixtureUnitName.ifBlank { pair[1].teamName.ifBlank { pair[1].userName } }
+            createMatch(
+                seedMatch.copy(
+                    id = "",
+                    teamA = teamA,
+                    teamB = teamB,
+                    teamADepartment = pair[0].department,
+                    teamBDepartment = pair[1].department,
+                    scoreA = 0,
+                    scoreB = 0,
+                    status = MatchStatus.SCHEDULED,
+                    scheduledTime = com.google.firebase.Timestamp.now(),
+                    round = seedMatch.round.ifBlank { "Round ${index + 1}" },
+                    registrationCount = 0,
+                    currentSquadCount = 0,
+                    maxRegistrations = 0,
+                    maxSquadSize = 0
+                )
+            )
+            created++
+        }
+
+        return created
+    }
+
+    suspend fun generateFixturesFromApprovedTournamentRegistrations(tournamentId: String): Int {
+        val tournamentDoc = firestore.collection(TOURNAMENTS_COLLECTION).document(tournamentId).get().await()
+        val tournament = tournamentDoc.toObject(Tournament::class.java)?.copy(id = tournamentDoc.id)
+            ?: throw IllegalArgumentException("Tournament not found")
+
+        val approved = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("tournamentId", tournamentId)
+            .whereEqualTo("status", RegistrationStatus.CONFIRMED.name)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { it.toObject(Registration::class.java)?.copy(id = it.id) }
+
+        val units = if (SportType.fromString(tournament.sport) == SportType.BADMINTON) {
+            val doubles = approved.filter {
+                it.registrationKind == RegistrationKind.BADMINTON_DOUBLES &&
+                    it.partnerName.isNotBlank() &&
+                    it.partnerRollNumber.isNotBlank()
+            }
+            val singles = approved.filter {
+                it.registrationKind == RegistrationKind.BADMINTON_SINGLES ||
+                    it.registrationKind == RegistrationKind.INDIVIDUAL
+            }
+            when {
+                doubles.size >= 2 -> doubles
+                singles.size >= 2 -> singles
+                else -> emptyList()
+            }
+        } else {
+            approved.filter { it.registrationKind == RegistrationKind.TEAM || it.teamName.isNotBlank() }
+        }
+
+        if (units.size < 2) {
+            throw IllegalArgumentException("Need at least two approved teams or pairs")
+        }
+
+        var created = 0
+        units.chunked(2).forEachIndexed { index, pair ->
+            if (pair.size < 2) return@forEachIndexed
+            val teamA = pair[0].fixtureUnitName.ifBlank { pair[0].teamName.ifBlank { pair[0].userName } }
+            val teamB = pair[1].fixtureUnitName.ifBlank { pair[1].teamName.ifBlank { pair[1].userName } }
+            createMatch(
+                Match(
+                    sportType = tournament.sport,
+                    teamA = teamA,
+                    teamB = teamB,
+                    teamADepartment = pair[0].department,
+                    teamBDepartment = pair[1].department,
+                    status = MatchStatus.SCHEDULED,
+                    venue = tournament.venue,
+                    scheduledTime = com.google.firebase.Timestamp.now(),
+                    tournamentId = tournament.id,
+                    tournamentName = tournament.name,
+                    round = "Round ${index + 1}",
+                    eligibilityText = tournament.eligibilityText,
+                    allowedDepartments = tournament.allowedDepartments,
+                    allowedYears = tournament.allowedYears
+                )
+            )
+            created++
+        }
+        return created
+    }
 
     /**
      * Get all scorecards for a match (real-time).
@@ -1471,6 +2074,18 @@ class SportFlowRepository @Inject constructor(
     ) {
         val uid = auth.currentUser?.uid ?: return
         try {
+            val existing = firestore.collection(USERS_COLLECTION)
+                .document(uid)
+                .collection(USER_NOTIFICATIONS)
+                .whereEqualTo("type", type)
+                .whereEqualTo("title", title)
+                .whereEqualTo("body", body)
+                .whereEqualTo("matchId", matchId)
+                .whereEqualTo("seen", false)
+                .limit(1)
+                .get()
+                .await()
+            if (!existing.isEmpty) return
             val notification = hashMapOf(
                 "type"      to type,
                 "title"     to title,
@@ -1487,6 +2102,48 @@ class SportFlowRepository @Inject constructor(
         } catch (_: Exception) {
             // Non-critical — notification persistence failure should not crash the app
         }
+    }
+
+    fun observeMyRegistrations(): Flow<List<Registration>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("uid", uid)
+            .orderBy("registeredAt", Query.Direction.DESCENDING)
+            .limit(20)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val registrations = snapshot?.documents?.mapNotNull {
+                    it.toObject(Registration::class.java)?.copy(id = it.id)
+                } ?: emptyList()
+                trySend(registrations)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    fun observePendingRegistrations(): Flow<List<Registration>> = callbackFlow {
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("status", RegistrationStatus.PENDING.name)
+            .orderBy("registeredAt", Query.Direction.DESCENDING)
+            .limit(20)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+                val registrations = snapshot?.documents?.mapNotNull {
+                    it.toObject(Registration::class.java)?.copy(id = it.id)
+                } ?: emptyList()
+                trySend(registrations)
+            }
+        awaitClose { listener.remove() }
     }
 
     /**
