@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.sportflow.app
 
 import android.Manifest
@@ -41,14 +43,7 @@ class MainActivity : ComponentActivity() {
         notificationManager.start()
 
         setContent {
-            SportFlowTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = SportFlowTheme.colors.background
-                ) {
-                    SportFlowNavHost()
-                }
-            }
+            MainContent()
         }
     }
 
@@ -69,5 +64,17 @@ class MainActivity : ComponentActivity() {
             }
         }
         // Android 12 and below — push notifications are allowed by default.
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun MainContent() {
+    SportFlowTheme {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = SportFlowTheme.colors.background
+        ) {
+            SportFlowNavHost()
+        }
     }
 }
