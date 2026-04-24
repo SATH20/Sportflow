@@ -130,26 +130,45 @@ class NotificationManager @Inject constructor(
 
                 snapshot.documentChanges.forEach { change ->
                     val doc      = change.document
-                    val matchId  = doc.getString("matchId") ?: return@forEach
+                    val matchId  = doc.getString("matchId").orEmpty()
                     val status   = doc.getString("status")  ?: return@forEach
 
                     if (status == "CONFIRMED") {
-                        // Fetch match name for friendly text
-                        firestore.collection(SportFlowRepository.MATCHES_COLLECTION)
-                            .document(matchId).get()
-                            .addOnSuccessListener { matchDoc ->
-                                val teamA = matchDoc.getString("teamA") ?: "Match"
-                                val teamB = matchDoc.getString("teamB") ?: ""
-                                val venue = matchDoc.getString("venue") ?: "GNITS"
-                                showSmartNotification(
-                                    context   = context,
-                                    channelId = GnitsMessagingService.CHANNEL_PAYMENT,
-                                    title     = "🎫 Registration Confirmed!",
-                                    body      = "You're in for $teamA vs $teamB at $venue",
-                                    matchId   = matchId,
-                                    type      = "registration_success"
-                                )
-                            }
+                        val fixtureUnitName = doc.getString("fixtureUnitName").orEmpty()
+                        val teamName = doc.getString("teamName").orEmpty()
+                        val tournamentId = doc.getString("tournamentId").orEmpty()
+                        val tournamentName = doc.getString("tournamentName").orEmpty()
+
+                        if (matchId.isBlank()) {
+                            val entryName = fixtureUnitName.ifBlank { teamName.ifBlank { "your entry" } }
+                            val tournamentLabel = tournamentName.ifBlank { "the tournament" }
+                            showSmartNotification(
+                                context   = context,
+                                channelId = GnitsMessagingService.CHANNEL_PAYMENT,
+                                title     = "🎫 Registration Confirmed!",
+                                body      = "$entryName is confirmed for $tournamentLabel",
+                                matchId   = tournamentId,
+                                type      = "registration_success"
+                            )
+                        } else {
+                            // Fetch match name for friendly text when this is a direct match registration.
+                            firestore.collection(SportFlowRepository.MATCHES_COLLECTION)
+                                .document(matchId)
+                                .get()
+                                .addOnSuccessListener { matchDoc ->
+                                    val teamA = matchDoc.getString("teamA") ?: "Match"
+                                    val teamB = matchDoc.getString("teamB") ?: ""
+                                    val venue = matchDoc.getString("venue") ?: "GNITS"
+                                    showSmartNotification(
+                                        context   = context,
+                                        channelId = GnitsMessagingService.CHANNEL_PAYMENT,
+                                        title     = "🎫 Registration Confirmed!",
+                                        body      = "You're in for $teamA vs $teamB at $venue",
+                                        matchId   = matchId,
+                                        type      = "registration_success"
+                                    )
+                                }
+                        }
                     }
                 }
             }
