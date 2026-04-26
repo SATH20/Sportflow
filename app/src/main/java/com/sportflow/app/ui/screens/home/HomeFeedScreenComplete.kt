@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SportsScore
@@ -245,19 +246,12 @@ fun HomeFeedScreenComplete(
                 if (roleState.myRegistrations.isEmpty()) {
                     item { EmptyHomeCard("No registrations yet. Join a tournament or match to see it here.") }
                 } else {
-                    item {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            items(roleState.myRegistrations, key = { it.id }) { registration ->
-                                JourneyRegistrationCard(
-                                    registration = registration,
-                                    relatedMatch = findRelatedMatch(registration, roleState.allMatches),
-                                    relatedTournament = findRelatedTournament(registration, homeState.tournaments)
-                                )
-                            }
-                        }
+                    items(roleState.myRegistrations, key = { it.id }) { registration ->
+                        RegistrationScheduleCard(
+                            registration = registration,
+                            relatedMatch = findRelatedMatch(registration, roleState.allMatches),
+                            relatedTournament = findRelatedTournament(registration, homeState.tournaments)
+                        )
                     }
                 }
             }
@@ -353,72 +347,6 @@ private fun DashboardHeaderCard(
     }
 }
 
-@Composable
-private fun JourneyRegistrationCard(
-    registration: Registration,
-    relatedMatch: Match?,
-    relatedTournament: Tournament?
-) {
-    val completed = relatedMatch?.status == MatchStatus.COMPLETED
-    val badgeText = when {
-        completed -> "Match Completed"
-        registration.status == RegistrationStatus.CONFIRMED -> "Confirmed"
-        else -> "Pending Approval"
-    }
-    val badgeColor = when {
-        completed -> InfoBlue
-        registration.status == RegistrationStatus.CONFIRMED -> SuccessGreen
-        else -> WarningAmber
-    }
-
-    SportCard(modifier = Modifier.width(300.dp)) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = registration.matchName.ifBlank {
-                        registration.fixtureUnitName.ifBlank {
-                            relatedTournament?.name ?: "Tournament Entry"
-                        }
-                    },
-                    style = SportFlowTheme.typography.headlineSmall,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                StatusPill(text = badgeText, color = badgeColor)
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = registration.fixtureUnitName.ifBlank {
-                    registration.teamName.ifBlank { registration.userName }
-                },
-                style = SportFlowTheme.typography.bodyMedium,
-                color = TextSecondary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = registrationScheduleLabel(registration, relatedMatch, relatedTournament),
-                style = SportFlowTheme.typography.bodySmall,
-                color = TextSecondary
-            )
-            if (registration.tournamentId.isNotBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "Tournament registration",
-                    style = SportFlowTheme.typography.labelMedium,
-                    color = GnitsOrangeDark
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun TournamentScheduleCard(tournament: Tournament) {
@@ -471,6 +399,81 @@ private fun TournamentScheduleCard(tournament: Tournament) {
                     TournamentStatus.IN_PROGRESS -> LiveRed
                     else -> GnitsOrange
                 }
+            )
+        }
+    }
+}
+
+@Composable
+private fun RegistrationScheduleCard(
+    registration: Registration,
+    relatedMatch: Match?,
+    relatedTournament: Tournament?
+) {
+    val statusBadgeText = when {
+        relatedMatch?.status == MatchStatus.COMPLETED -> "Match Completed"
+        registration.status == RegistrationStatus.CONFIRMED -> "Approved"
+        else -> "Pending"
+    }
+    val statusBadgeColor = when {
+        relatedMatch?.status == MatchStatus.COMPLETED -> InfoBlue
+        registration.status == RegistrationStatus.CONFIRMED -> SuccessGreen
+        else -> WarningAmber
+    }
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .background(GnitsOrangeLight, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.HowToReg, contentDescription = null, tint = GnitsOrange)
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = registration.matchName.ifBlank {
+                        registration.fixtureUnitName.ifBlank {
+                            relatedTournament?.name ?: "Registration"
+                        }
+                    },
+                    style = SportFlowTheme.typography.headlineSmall,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = registration.fixtureUnitName.ifBlank {
+                        registration.teamName.ifBlank { registration.userName }
+                    },
+                    style = SportFlowTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = registrationScheduleLabel(registration, relatedMatch, relatedTournament),
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            }
+            StatusPill(
+                text = statusBadgeText,
+                color = statusBadgeColor
             )
         }
     }
