@@ -24,6 +24,10 @@ class SportFlowRepository @Inject constructor(
     private val auth: FirebaseAuth,
     private val messaging: FirebaseMessaging
 ) {
+    private fun isPairStyleSport(sport: SportType): Boolean {
+        return sport == SportType.BADMINTON || sport == SportType.TABLE_TENNIS
+    }
+
     // ── Collection Names & FCM Topics (GNITS namespace) ─────────────────────
     companion object {
         // Firestore collections
@@ -1111,13 +1115,14 @@ class SportFlowRepository @Inject constructor(
 
         val sport = SportType.fromString(tournament.sport)
         val kind = payload.registrationKind
-        val requiresTeamRoster = sport != SportType.BADMINTON && kind == RegistrationKind.TEAM
-        val requiresPair = sport == SportType.BADMINTON && kind == RegistrationKind.BADMINTON_DOUBLES
+        val pairStyleSport = isPairStyleSport(sport)
+        val requiresTeamRoster = !pairStyleSport && kind == RegistrationKind.TEAM
+        val requiresPair = pairStyleSport && kind == RegistrationKind.BADMINTON_DOUBLES
 
-        if (sport == SportType.BADMINTON && kind == RegistrationKind.TEAM) {
-            throw IllegalArgumentException("Badminton tournaments accept singles or doubles pair entries")
+        if (pairStyleSport && kind == RegistrationKind.TEAM) {
+            throw IllegalArgumentException("${tournament.sport} tournaments accept singles or doubles pair entries")
         }
-        if (sport != SportType.BADMINTON && kind != RegistrationKind.TEAM) {
+        if (!pairStyleSport && kind != RegistrationKind.TEAM) {
             throw IllegalArgumentException("This tournament requires a captain-led team entry")
         }
         if (requiresTeamRoster && payload.teamName.isBlank()) {
@@ -1824,7 +1829,7 @@ class SportFlowRepository @Inject constructor(
             .documents
             .mapNotNull { it.toObject(Registration::class.java)?.copy(id = it.id) }
 
-        val units = if (SportType.fromString(seedMatch.sportType) == SportType.BADMINTON) {
+        val units = if (isPairStyleSport(SportType.fromString(seedMatch.sportType))) {
             val doubles = approved.filter {
                 it.registrationKind == RegistrationKind.BADMINTON_DOUBLES &&
                     it.partnerName.isNotBlank() &&
@@ -1852,7 +1857,7 @@ class SportFlowRepository @Inject constructor(
             if (pair.size < 2) return@forEachIndexed
             val teamA = pair[0].fixtureUnitName.ifBlank { pair[0].teamName.ifBlank { pair[0].userName } }
             val teamB = pair[1].fixtureUnitName.ifBlank { pair[1].teamName.ifBlank { pair[1].userName } }
-            createMatch(
+            val createdMatchId = createMatch(
                 seedMatch.copy(
                     id = "",
                     teamA = teamA,
@@ -1870,6 +1875,8 @@ class SportFlowRepository @Inject constructor(
                     maxSquadSize = 0
                 )
             )
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[0], seedMatch.sportType, seedMatch.tournamentName)
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[1], seedMatch.sportType, seedMatch.tournamentName)
             created++
         }
 
@@ -1889,7 +1896,7 @@ class SportFlowRepository @Inject constructor(
             .documents
             .mapNotNull { it.toObject(Registration::class.java)?.copy(id = it.id) }
 
-        val units = if (SportType.fromString(tournament.sport) == SportType.BADMINTON) {
+        val units = if (isPairStyleSport(SportType.fromString(tournament.sport))) {
             val doubles = approved.filter {
                 it.registrationKind == RegistrationKind.BADMINTON_DOUBLES &&
                     it.partnerName.isNotBlank() &&
@@ -1917,7 +1924,7 @@ class SportFlowRepository @Inject constructor(
             if (pair.size < 2) return@forEachIndexed
             val teamA = pair[0].fixtureUnitName.ifBlank { pair[0].teamName.ifBlank { pair[0].userName } }
             val teamB = pair[1].fixtureUnitName.ifBlank { pair[1].teamName.ifBlank { pair[1].userName } }
-            createMatch(
+            val createdMatchId = createMatch(
                 Match(
                     sportType = tournament.sport,
                     teamA = teamA,
@@ -1935,9 +1942,34 @@ class SportFlowRepository @Inject constructor(
                     allowedYears = tournament.allowedYears
                 )
             )
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[0], tournament.sport, tournament.name)
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[1], tournament.sport, tournament.name)
             created++
         }
         return created
+    }
+
+    private suspend fun linkRegistrationToGeneratedMatch(
+        matchId: String,
+        registration: Registration,
+        sportType: String,
+        tournamentName: String
+    ) {
+        if (matchId.isBlank() || registration.uid.isBlank()) return
+
+        val matchRegistration = registration.copy(
+            matchId = matchId,
+            matchName = tournamentName.ifBlank { registration.matchName },
+            sportType = sportType,
+            status = RegistrationStatus.CONFIRMED
+        )
+
+        firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .collection(REGISTRATIONS_COLLECTION)
+            .document(registration.uid)
+            .set(matchRegistration.copy(id = registration.uid))
+            .await()
     }
 
     /**

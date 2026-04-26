@@ -131,7 +131,7 @@ fun HomeFeedScreenComplete(
                 title = {
                     Column {
                         Text(
-                            text = if (isAdmin) "Command Center" else "My Journey",
+                            text = if (isAdmin) "Admin Dashboard" else "My Journey",
                             style = SportFlowTheme.typography.headlineLarge,
                             color = Color.White
                         )

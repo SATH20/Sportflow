@@ -21,26 +21,25 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.sportflow.app.data.model.*
-import com.sportflow.app.data.repository.SportFlowRepository
 import com.sportflow.app.ui.components.GlassmorphicCard
 import com.sportflow.app.ui.components.PremiumButton
 import com.sportflow.app.ui.theme.*
+import com.sportflow.app.ui.viewmodel.MyMatchesViewModel
 import com.sportflow.app.ui.viewmodel.RegistrationViewModel
-import javax.inject.Inject
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyMatchesScreenComplete(
     navController: NavHostController,
     currentUserRole: UserRole,
+    myMatchesViewModel: MyMatchesViewModel = hiltViewModel(),
     registrationViewModel: RegistrationViewModel = hiltViewModel()
 ) {
     val regState by registrationViewModel.uiState.collectAsStateWithLifecycle()
-    
-    // Get repository to observe registered matches
-    val repository = androidx.hilt.navigation.compose.hiltViewModel<MyMatchesViewModel>().repository
-    val myMatches by repository.observeMyRegisteredMatchesRealtime()
-        .collectAsState(initial = emptyList())
+    val myMatchesState by myMatchesViewModel.uiState.collectAsStateWithLifecycle()
+    val myMatches = myMatchesState.myMatches
     
     var selectedTab by remember { mutableIntStateOf(0) }
     var showCancelDialog by remember { mutableStateOf(false) }
@@ -268,11 +267,11 @@ fun MyMatchCard(
                     tint = TextTertiary
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(
-                    text = match.scheduledTime?.toDate()?.toString() ?: "TBD",
-                    style = SportFlowTheme.typography.bodySmall,
-                    color = TextSecondary
-                )
+                        Text(
+                            text = formatMatchTime(match.scheduledTime),
+                            style = SportFlowTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
             }
 
             // Tournament name
@@ -373,8 +372,8 @@ fun MyMatchCard(
     }
 }
 
-// ViewModel to inject repository
-@dagger.hilt.android.lifecycle.HiltViewModel
-class MyMatchesViewModel @javax.inject.Inject constructor(
-    val repository: SportFlowRepository
-) : androidx.lifecycle.ViewModel()
+private fun formatMatchTime(timestamp: com.google.firebase.Timestamp?): String {
+    if (timestamp == null) return "TBD"
+    val formatter = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
+    return formatter.format(timestamp.toDate())
+}

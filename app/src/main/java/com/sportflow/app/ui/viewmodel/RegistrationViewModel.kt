@@ -185,9 +185,10 @@ class RegistrationViewModel @Inject constructor(
             sportType == SportType.BASKETBALL ||
             sportType == SportType.VOLLEYBALL ||
             sportType == SportType.KABADDI ||
-            sportType == SportType.BADMINTON
+            sportType == SportType.BADMINTON ||
+            sportType == SportType.TABLE_TENNIS
         ) {
-            _uiState.update { it.copy(error = "Open the registration form to create a team or badminton entry") }
+            _uiState.update { it.copy(error = "Open the registration form to create a team or singles/doubles entry") }
             return
         }
         viewModelScope.launch {

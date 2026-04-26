@@ -73,9 +73,9 @@ fun AdvancedRegistrationBottomSheet(
         SportType.VOLLEYBALL, SportType.KABADDI -> true
         else -> false
     }
-    val isBadminton = sportType == SportType.BADMINTON
+    val isPairSport = sportType == SportType.BADMINTON || sportType == SportType.TABLE_TENNIS
     
-    val maxSteps = if (isTeamSport || isBadminton) 3 else 2
+    val maxSteps = if (isTeamSport || isPairSport) 3 else 2
     
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -226,7 +226,7 @@ fun AdvancedRegistrationBottomSheet(
                                 captainPhone = captainPhone,
                                 registrationKind = when {
                                     isTeamSport -> RegistrationKind.TEAM
-                                    isBadminton -> badmintonMode
+        isPairSport -> badmintonMode
                                     else -> RegistrationKind.INDIVIDUAL
                                 },
                                 roster = if (isTeamSport) normalizedRoster else emptyList(),

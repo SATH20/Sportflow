@@ -354,6 +354,8 @@ data class CreateTournamentForm(
     val name: String = "",
     val sport: String = "",
     val venue: String = "",
+    val startDateText: String = "",
+    val endDateText: String = "",
     val maxTeams: String = "16",
     val prizePool: String = "",
     val eligibilityText: String = "All GNITS students"
@@ -449,13 +451,34 @@ class AdminViewModel @Inject constructor(
 
     fun createTournament() {
         val form = _tournamentForm.value
-        if (form.name.isBlank() || form.sport.isBlank() || form.venue.isBlank()) {
-            _uiState.update { it.copy(error = "Please enter tournament name, sport, and venue") }
+        if (form.name.isBlank() || form.sport.isBlank() || form.venue.isBlank() ||
+            form.startDateText.isBlank() || form.endDateText.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter tournament name, sport, venue, start date, and end date") }
             return
         }
         viewModelScope.launch {
             _uiState.update { it.copy(isCreatingMatch = true) }
             try {
+                val startDate = parseAdminDateTime(form.startDateText)
+                val endDate = parseAdminDateTime(form.endDateText)
+                if (startDate == null || endDate == null) {
+                    _uiState.update {
+                        it.copy(
+                            isCreatingMatch = false,
+                            error = "Use date format dd/MM/yyyy HH:mm for start and end"
+                        )
+                    }
+                    return@launch
+                }
+                if (endDate.seconds < startDate.seconds) {
+                    _uiState.update {
+                        it.copy(
+                            isCreatingMatch = false,
+                            error = "End date/time must be after the start date/time"
+                        )
+                    }
+                    return@launch
+                }
                 repository.createTournament(
                     Tournament(
                         name = form.name.trim(),
@@ -465,7 +488,8 @@ class AdminViewModel @Inject constructor(
                         prizePool = form.prizePool,
                         eligibilityText = form.eligibilityText.ifBlank { "All GNITS students" },
                         status = TournamentStatus.REGISTRATION,
-                        startDate = Timestamp.now()
+                        startDate = startDate,
+                        endDate = endDate
                     )
                 )
                 _tournamentForm.update { CreateTournamentForm() }
@@ -623,6 +647,14 @@ class AdminViewModel @Inject constructor(
     // ── Sport-Specific Live Scoring ─────────────────────────────────────────
 
     fun selectMatchForScoring(match: Match) {
+        val scheduled = match.scheduledTime
+        val now = Timestamp.now()
+        if (match.status == MatchStatus.SCHEDULED && scheduled != null && scheduled.seconds > now.seconds) {
+            _uiState.update {
+                it.copy(error = "Live scoring opens only when the scheduled time is reached or after the match is started")
+            }
+            return
+        }
         _uiState.update { it.copy(selectedMatch = match) }
         loadScorecardsForSelectedMatch(match.id)
     }
@@ -814,7 +846,7 @@ class AdminViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isGeneratingBracket = false,
-                        successMessage = "Bracket generated successfully!"
+                        successMessage = "Tournament generated successfully!"
                     )
                 }
             } catch (e: Exception) {
@@ -987,6 +1019,17 @@ class AdminViewModel @Inject constructor(
                 // Non-critical
             }
         }
+    }
+}
+
+private fun parseAdminDateTime(raw: String): Timestamp? {
+    return try {
+        val formatter = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault())
+        formatter.isLenient = false
+        val parsed = formatter.parse(raw.trim()) ?: return null
+        Timestamp(parsed)
+    } catch (_: Exception) {
+        null
     }
 }
 

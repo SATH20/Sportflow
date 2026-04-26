@@ -29,12 +29,15 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
+import com.google.firebase.Timestamp
 import com.sportflow.app.data.model.*
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AdminViewModel
 import com.sportflow.app.ui.viewmodel.CreateMatchForm
 import com.sportflow.app.ui.viewmodel.CreateTournamentForm
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,9 +60,9 @@ fun AdminDashboardScreen(
     var announcementTitle by rememberSaveable { mutableStateOf("") }
     var announcementMessage by rememberSaveable { mutableStateOf("") }
     val tabs = listOf(
-        "Create Tournament", "Live Scoring", "AI Fixtures",
+        "Create Tournament", "Live Scoring", "Manual Fixtures",
         "Manual Editor", "Referee Panel",
-        "Matches", "Payments", "Tournaments", "Registrations"
+        "Match Management", "Payments Removed", "Tournaments", "Registration Approvals"
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -84,13 +87,13 @@ fun AdminDashboardScreen(
                 ) {
                     Column {
                         Text(
-                            text = "GNITS Control Room",
+                            text = "Admin Dashboard",
                             style = SportFlowTheme.typography.displayLarge,
                             color = TextPrimary
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Manage matches, scores & tournaments",
+                            text = "Registration approvals and match management",
                             style = SportFlowTheme.typography.bodyMedium,
                             color = TextSecondary
                         )
@@ -120,9 +123,9 @@ fun AdminDashboardScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 StatTile(
-                    icon = Icons.Filled.Payment,
-                    value = "${uiState.pendingPayments.size}",
-                    label = "Pending",
+                    icon = Icons.Filled.HowToReg,
+                    value = "${uiState.registrations.count { it.status == RegistrationStatus.PENDING }}",
+                    label = "Approvals",
                     accentColor = WarningAmber,
                     modifier = Modifier.weight(1f)
                 )
@@ -185,7 +188,7 @@ fun AdminDashboardScreen(
                                     fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal
                                 )
                                 // "New Entry" badge for Registrations tab
-                                if (title == "Registrations" && uiState.newRegistrationCount > 0) {
+                                if (title == "Registration Approvals" && uiState.newRegistrationCount > 0) {
                                     Badge(
                                         containerColor = LiveRed,
                                         contentColor = Color.White
@@ -245,8 +248,8 @@ fun AdminDashboardScreen(
             }
             2 -> {
                 // ── AI FIXTURE ENGINE TAB ────────────────────────────────
-                item { SectionHeader(title = "🤖 AI Fixture Engine") }
-                item { AIFixtureEngineCard(fixtureConfig, viewModel, uiState.isGeneratingBracket) }
+                item { SectionHeader(title = "Manual Fixture Engine") }
+                item { EmptyState("AI fixture generation is removed for this phase. Use tournament approvals and the manual editor to create fixtures.") }
             }
             3 -> {
                 // ── MANUAL FIXTURE EDITOR TAB ────────────────────────────
@@ -319,7 +322,7 @@ fun AdminDashboardScreen(
             }
             5 -> {
                 // ── ALL MATCHES TAB ──────────────────────────────────────
-                item { SectionHeader(title = "All GNITS Matches") }
+                item { SectionHeader(title = "Match Management") }
                 if (uiState.allMatches.isEmpty()) {
                     item { EmptyState("No matches created yet") }
                 } else {
@@ -330,9 +333,9 @@ fun AdminDashboardScreen(
             }
             6 -> {
                 // ── PAYMENTS TAB ─────────────────────────────────────────
-                item { SectionHeader(title = "Pending Verifications") }
+                item { SectionHeader(title = "Payments Removed") }
                 if (uiState.pendingPayments.isEmpty()) {
-                    item { EmptyState("No pending payments") }
+                    item { EmptyState("Payment verification is removed for this phase.") }
                 } else {
                     items(uiState.pendingPayments) { payment ->
                         PaymentCard(
@@ -360,7 +363,7 @@ fun AdminDashboardScreen(
 
                 item {
                     SectionHeader(
-                        title = "Student Registrations",
+                        title = "Registration Approvals",
                         actionText = if (uiState.newRegistrationCount > 0) "Mark All Seen" else null,
                         onAction = { viewModel.markAllRegistrationsSeen() }
                     )
@@ -396,7 +399,7 @@ fun AdminDashboardScreen(
                 if (fixtureReadyMatchId != null) {
                     item {
                         PillButton(
-                            text = "Generate Fixtures from Approved",
+                            text = "Generate Tournament Matches",
                             onClick = {
                                 if (uiState.tournaments.any { it.id == fixtureReadyMatchId }) {
                                     viewModel.generateFixturesFromApprovedTournamentRegistrations(fixtureReadyMatchId)
@@ -638,6 +641,25 @@ private fun CreateTournamentFormCard(
                         )
                     }
                 }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = form.startDateText,
+                    onValueChange = { viewModel.updateTournamentForm(form.copy(startDateText = it)) },
+                    label = { Text("Start (dd/MM/yyyy HH:mm)") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = form.endDateText,
+                    onValueChange = { viewModel.updateTournamentForm(form.copy(endDateText = it)) },
+                    label = { Text("End (dd/MM/yyyy HH:mm)") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1456,6 +1478,20 @@ private fun SelectableMatchCard(
                     style = SportFlowTheme.typography.bodySmall,
                     color = TextTertiary
                 )
+                if (match.tournamentName.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Tournament: ${match.tournamentName}",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = GnitsOrange
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Scheduled: ${formatAdminDateTime(match.scheduledTime)}",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
             }
             StatusChip(
                 text = match.status.name,
@@ -1604,6 +1640,12 @@ private fun TournamentManagementCard(
                         style = SportFlowTheme.typography.bodyMedium,
                         color = TextSecondary
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "${tournament.venue} • ${formatTournamentRange(tournament.startDate, tournament.endDate)}",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = TextTertiary
+                    )
                 }
                 StatusChip(
                     text = tournament.status.name.replace("_", " "),
@@ -1620,7 +1662,7 @@ private fun TournamentManagementCard(
 
             if (!tournament.bracketGenerated) {
                 PillButton(
-                    text = if (isGenerating) "Generating..." else "Generate Bracket",
+                    text = if (isGenerating) "Generating..." else "Generate Tournament",
                     onClick = onGenerateBracket,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isGenerating,
@@ -1646,7 +1688,7 @@ private fun TournamentManagementCard(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Bracket Generated",
+                            text = "Tournament Generated",
                             style = SportFlowTheme.typography.labelLarge,
                             color = GnitsOrangeDark,
                             fontWeight = FontWeight.Bold
@@ -1744,6 +1786,32 @@ private fun EmptyState(message: String) {
                 color = TextTertiary
             )
         }
+    }
+}
+
+private fun formatAdminDateTime(timestamp: Timestamp?): String {
+    if (timestamp == null) return "TBD"
+    val formatter = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
+    return formatter.format(timestamp.toDate())
+}
+
+private fun formatTournamentRange(start: Timestamp?, end: Timestamp?): String {
+    return when {
+        start != null && end != null -> "From ${formatAdminDateTime(start)} to ${formatAdminDateTime(end)}"
+        start != null -> "Starts ${formatAdminDateTime(start)}"
+        end != null -> "Ends ${formatAdminDateTime(end)}"
+        else -> "Schedule TBD"
+    }
+}
+
+private fun parseAdminScreenDateTime(raw: String): Timestamp? {
+    return try {
+        val formatter = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
+        formatter.isLenient = false
+        val parsed = formatter.parse(raw.trim()) ?: return null
+        Timestamp(parsed)
+    } catch (_: Exception) {
+        null
     }
 }
 
@@ -1956,6 +2024,7 @@ private fun ManualFixtureEditorCard(
     var editVenue by remember(match.id) { mutableStateOf(match.venue) }
     var editTeamA by remember(match.id) { mutableStateOf(match.teamA) }
     var editTeamB by remember(match.id) { mutableStateOf(match.teamB) }
+    var editScheduledTime by remember(match.id) { mutableStateOf(formatAdminDateTime(match.scheduledTime)) }
     var venueExpanded by remember { mutableStateOf(false) }
 
     SportCard(
@@ -2052,6 +2121,17 @@ private fun ManualFixtureEditorCard(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
+                OutlinedTextField(
+                    value = editScheduledTime,
+                    onValueChange = { editScheduledTime = it },
+                    label = { Text("Scheduled Time (dd/MM/yyyy HH:mm)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    singleLine = true
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2081,7 +2161,8 @@ private fun ManualFixtureEditorCard(
                                     matchId = match.id,
                                     newTeamA = editTeamA.takeIf { it != match.teamA },
                                     newTeamB = editTeamB.takeIf { it != match.teamB },
-                                    newVenue = editVenue.takeIf { it != match.venue }
+                                    newVenue = editVenue.takeIf { it != match.venue },
+                                    newScheduledTime = parseAdminScreenDateTime(editScheduledTime)?.takeIf { it != match.scheduledTime }
                                 )
                             )
                             expanded = false
