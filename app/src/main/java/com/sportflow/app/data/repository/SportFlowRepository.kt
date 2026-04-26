@@ -1450,9 +1450,8 @@ class SportFlowRepository @Inject constructor(
 
     /**
      * Real-time stream of full Match documents for all matches the current user is
-     * registered in. This uses TWO snapshot listeners as a single source of truth:
-     *   1) registrations collectionGroup for membership
-     *   2) gnits_matches collection for match document updates
+     * registered in. Queries the top-level gnits_registrations collection for better
+     * reliability and then fetches the corresponding match documents.
      *
      * Result: admin manual edits (venue/team/time) reflect instantly on My Matches
      * without requiring any registration mutation.
@@ -1465,34 +1464,36 @@ class SportFlowRepository @Inject constructor(
             return@callbackFlow
         }
 
-        var registeredIds: Set<String> = emptySet()
-        var allMatches: List<com.sportflow.app.data.model.Match> = emptyList()
+        var registeredMatchIds: Set<String> = emptySet()
+        var allMatches: Map<String, com.sportflow.app.data.model.Match> = emptyMap()
 
         fun emitFiltered() {
-            val filtered = if (registeredIds.isEmpty()) {
+            val filtered = if (registeredMatchIds.isEmpty()) {
                 emptyList()
             } else {
-                allMatches
-                    .filter { it.id in registeredIds }
+                registeredMatchIds.mapNotNull { matchId -> allMatches[matchId] }
                     .sortedByDescending { it.scheduledTime }
             }
             trySend(filtered)
         }
 
-        val registrationListener = firestore.collectionGroup(REGISTRATIONS_COLLECTION)
+        // Listen to user's registrations in top-level collection
+        val registrationListener = firestore.collection(GNITS_REGISTRATIONS)
             .whereEqualTo("uid", uid)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     trySend(emptyList())
                     return@addSnapshotListener
                 }
-                registeredIds = snapshot?.documents
+                registeredMatchIds = snapshot?.documents
                     ?.mapNotNull { it.getString("matchId") }
+                    ?.filter { it.isNotBlank() }
                     ?.toSet()
                     ?: emptySet()
                 emitFiltered()
             }
 
+        // Listen to all matches for real-time updates
         val matchesListener = firestore.collection(MATCHES_COLLECTION)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
@@ -1501,7 +1502,7 @@ class SportFlowRepository @Inject constructor(
                 }
                 allMatches = snapshot?.documents?.mapNotNull {
                     it.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = it.id)
-                } ?: emptyList()
+                }?.associateBy { it.id } ?: emptyMap()
                 emitFiltered()
             }
 
@@ -2180,15 +2181,18 @@ class SportFlowRepository @Inject constructor(
         }
         val listener = firestore.collection(GNITS_REGISTRATIONS)
             .whereEqualTo("uid", uid)
-            .orderBy("registeredAt", Query.Direction.DESCENDING)
-            .limit(20)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
+                    // Log error but don't close - keep listening
                     trySend(emptyList())
                     return@addSnapshotListener
                 }
-                val registrations = snapshot?.documents?.mapNotNull {
-                    it.toObject(Registration::class.java)?.copy(id = it.id)
+                val registrations = snapshot?.documents?.mapNotNull { doc ->
+                    try {
+                        doc.toObject(Registration::class.java)?.copy(id = doc.id)
+                    } catch (e: Exception) {
+                        null // Skip malformed documents
+                    }
                 } ?: emptyList()
                 trySend(registrations)
             }
