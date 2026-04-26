@@ -1039,6 +1039,7 @@ private fun parseAdminDateTime(raw: String): Timestamp? {
 
 data class MyMatchesUiState(
     val myMatches: List<Match> = emptyList(),
+    val myRegistrations: Map<String, RegistrationStatus> = emptyMap(), // matchId -> status
     val isLoading: Boolean = true,
     val error: String? = null,
     val emptyMessage: String = "You haven't registered for any events yet"
@@ -1054,6 +1055,7 @@ class MyMatchesViewModel @Inject constructor(
 
     init {
         loadMyMatches()
+        loadMyRegistrations()
     }
 
     private fun loadMyMatches() {
@@ -1073,6 +1075,18 @@ class MyMatchesViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
+            }
+        }
+    }
+
+    private fun loadMyRegistrations() {
+        viewModelScope.launch {
+            try {
+                repository.observeMyRegistrationStatuses().collect { statusMap ->
+                    _uiState.update { it.copy(myRegistrations = statusMap) }
+                }
+            } catch (_: Exception) {
+                // Non-critical
             }
         }
     }

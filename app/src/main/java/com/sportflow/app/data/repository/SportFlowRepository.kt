@@ -1511,6 +1511,41 @@ class SportFlowRepository @Inject constructor(
         }
     }
 
+    /**
+     * Real-time map of registration statuses for the current user's registered matches.
+     * Returns a map of matchId -> RegistrationStatus (PENDING, CONFIRMED, CANCELLED).
+     * Used by My Matches screen to display approval status badges.
+     */
+    fun observeMyRegistrationStatuses(): Flow<Map<String, RegistrationStatus>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptyMap())
+            close()
+            return@callbackFlow
+        }
+
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("uid", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyMap())
+                    return@addSnapshotListener
+                }
+                val statusMap = snapshot?.documents?.mapNotNull { doc ->
+                    val matchId = doc.getString("matchId") ?: return@mapNotNull null
+                    val statusStr = doc.getString("status") ?: return@mapNotNull null
+                    val status = try {
+                        RegistrationStatus.valueOf(statusStr)
+                    } catch (_: Exception) {
+                        RegistrationStatus.PENDING
+                    }
+                    matchId to status
+                }?.toMap() ?: emptyMap()
+                trySend(statusMap)
+            }
+        awaitClose { listener.remove() }
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // MANUAL FIXTURE EDITING — Admin override for drag-and-drop changes
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

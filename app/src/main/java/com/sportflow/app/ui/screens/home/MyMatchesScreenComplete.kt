@@ -40,6 +40,7 @@ fun MyMatchesScreenComplete(
     val regState by registrationViewModel.uiState.collectAsStateWithLifecycle()
     val myMatchesState by myMatchesViewModel.uiState.collectAsStateWithLifecycle()
     val myMatches = myMatchesState.myMatches
+    val myRegistrations = myMatchesState.myRegistrations // New: registration status map
     
     var selectedTab by remember { mutableIntStateOf(0) }
     var showCancelDialog by remember { mutableStateOf(false) }
@@ -122,6 +123,7 @@ fun MyMatchesScreenComplete(
                     items(filteredMatches) { match ->
                         MyMatchCard(
                             match = match,
+                            registrationStatus = myRegistrations[match.id],
                             onCancel = {
                                 matchToCancel = match
                                 showCancelDialog = true
@@ -179,6 +181,7 @@ fun MyMatchesScreenComplete(
 @Composable
 fun MyMatchCard(
     match: Match,
+    registrationStatus: RegistrationStatus? = null,
     onCancel: () -> Unit,
     onNavigateToLive: () -> Unit
 ) {
@@ -208,23 +211,64 @@ fun MyMatchCard(
                     )
                 }
 
-                // Status badge
-                Surface(
-                    color = when (match.status) {
-                        MatchStatus.LIVE -> LiveRed
-                        MatchStatus.SCHEDULED -> InfoBlue
-                        MatchStatus.COMPLETED -> SuccessGreen
-                        else -> Color.Gray
-                    },
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = match.status.name,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        style = SportFlowTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // Registration status badge
+                    if (registrationStatus != null) {
+                        Surface(
+                            color = when (registrationStatus) {
+                                RegistrationStatus.CONFIRMED -> SuccessGreen
+                                RegistrationStatus.PENDING -> WarningAmber
+                                RegistrationStatus.CANCELLED -> Color.Gray
+                            },
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = when (registrationStatus) {
+                                        RegistrationStatus.CONFIRMED -> Icons.Filled.CheckCircle
+                                        RegistrationStatus.PENDING -> Icons.Filled.Schedule
+                                        RegistrationStatus.CANCELLED -> Icons.Filled.Cancel
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = Color.White
+                                )
+                                Text(
+                                    text = when (registrationStatus) {
+                                        RegistrationStatus.CONFIRMED -> "Approved"
+                                        RegistrationStatus.PENDING -> "Pending"
+                                        RegistrationStatus.CANCELLED -> "Cancelled"
+                                    },
+                                    style = SportFlowTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // Match status badge
+                    Surface(
+                        color = when (match.status) {
+                            MatchStatus.LIVE -> LiveRed
+                            MatchStatus.SCHEDULED -> InfoBlue
+                            MatchStatus.COMPLETED -> SuccessGreen
+                            else -> Color.Gray
+                        },
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            text = match.status.name,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            style = SportFlowTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 

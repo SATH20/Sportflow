@@ -62,7 +62,7 @@ fun AdminDashboardScreen(
     val tabs = listOf(
         "Create Tournament", "Live Scoring", "Manual Fixtures",
         "Manual Editor", "Referee Panel",
-        "Match Management", "Payments Removed", "Tournaments", "Registration Approvals"
+        "Match Management", "Tournaments", "Registration Approvals"
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -332,21 +332,6 @@ fun AdminDashboardScreen(
                 }
             }
             6 -> {
-                // ── PAYMENTS TAB ─────────────────────────────────────────
-                item { SectionHeader(title = "Payments Removed") }
-                if (uiState.pendingPayments.isEmpty()) {
-                    item { EmptyState("Payment verification is removed for this phase.") }
-                } else {
-                    items(uiState.pendingPayments) { payment ->
-                        PaymentCard(
-                            payment = payment,
-                            onVerify = { viewModel.verifyPayment(payment.id) },
-                            onReject = { viewModel.rejectPayment(payment.id) }
-                        )
-                    }
-                }
-            }
-            7 -> {
                 // ── TOURNAMENTS TAB ──────────────────────────────────────
                 item { SectionHeader(title = "Tournament Management") }
                 items(uiState.tournaments) { tournament ->
@@ -357,7 +342,7 @@ fun AdminDashboardScreen(
                     )
                 }
             }
-            8 -> {
+            7 -> {
                 // ── REGISTRATIONS TAB (Admin Data Bridge) ───────────────────
                 // selectedReg and regFilter are hoisted to the parent Composable scope
 
@@ -965,6 +950,50 @@ private fun LiveScoringPanel(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            // ── Match Not Started Warning ──────────────────────────────────
+            if (match.status == MatchStatus.SCHEDULED) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = WarningAmber.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, WarningAmber)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(48.dp),
+                            tint = WarningAmber
+                        )
+                        Text(
+                            text = "Match Must Be Started",
+                            style = SportFlowTheme.typography.headlineSmall,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Scoring is locked until the match is started. Click 'Start Match' below to begin live scoring.",
+                            style = SportFlowTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        PillButton(
+                            text = "Start Match Now",
+                            onClick = { viewModel.startMatch() },
+                            icon = Icons.Filled.PlayArrow,
+                            containerColor = SuccessGreen,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+                return@Column
+            }
+
             // ── Sport-specific score header ────────────────────────────────
             SportSpecificScoreHeader(match = match, score = score, sportType = sportType)
 
@@ -1514,100 +1543,6 @@ private fun SelectableMatchCard(
 }
 
 // ── Payment Card ─────────────────────────────────────────────────────────────
-
-@Composable
-private fun PaymentCard(
-    payment: Payment,
-    onVerify: () -> Unit,
-    onReject: () -> Unit
-) {
-    SportCard(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 6.dp)
-            .animateContentSize(animationSpec = tween(300))
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .background(WarningAmberBg, RoundedCornerShape(14.dp)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Filled.Payment,
-                            contentDescription = null,
-                            tint = WarningAmber,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = payment.teamName,
-                            style = SportFlowTheme.typography.headlineSmall,
-                            color = TextPrimary
-                        )
-                        Text(
-                            text = "TXN: ${payment.transactionId}",
-                            style = SportFlowTheme.typography.bodySmall,
-                            color = TextTertiary
-                        )
-                    }
-                }
-                Text(
-                    text = "₹${payment.amount.toInt()}",
-                    style = SportFlowTheme.typography.headlineLarge,
-                    color = GnitsOrange,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                PillButton(
-                    text = "Verify",
-                    onClick = onVerify,
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Filled.CheckCircle,
-                    containerColor = SuccessGreen
-                )
-
-                OutlinedButton(
-                    onClick = onReject,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp),
-                    shape = RoundedCornerShape(24.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, LiveRed.copy(alpha = 0.5f)),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = LiveRed)
-                ) {
-                    Icon(
-                        Icons.Filled.Cancel,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Reject",
-                        style = SportFlowTheme.typography.labelLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
-}
 
 // ── Tournament Management Card ───────────────────────────────────────────────
 
