@@ -246,12 +246,47 @@ fun HomeFeedScreenComplete(
                 if (roleState.myRegistrations.isEmpty()) {
                     item { EmptyHomeCard("No registrations yet. Join a tournament or match to see it here.") }
                 } else {
-                    items(roleState.myRegistrations, key = { it.id }) { registration ->
-                        RegistrationScheduleCard(
-                            registration = registration,
-                            relatedMatch = findRelatedMatch(registration, roleState.allMatches),
-                            relatedTournament = findRelatedTournament(registration, homeState.tournaments)
-                        )
+                    // Group registrations by tournament
+                    val registrationsByTournament = roleState.myRegistrations.groupBy { it.tournamentId }
+                    
+                    // Flatten into a single list with headers
+                    val displayItems = mutableListOf<Pair<String, Any>>()
+                    
+                    // Add tournament registrations only (no standalone matches)
+                    registrationsByTournament.forEach { (tournamentId, regs) ->
+                        if (tournamentId.isNotBlank()) {
+                            val tournament = findRelatedTournament(regs.first(), roleState.tournaments)
+                            if (tournament != null) {
+                                displayItems.add("header" to tournament)
+                                regs.forEach { reg ->
+                                    displayItems.add("registration" to reg)
+                                }
+                            }
+                        }
+                    }
+                    
+                    items(displayItems.size, key = { displayItems[it].hashCode() }) { index ->
+                        val (type, item) = displayItems[index]
+                        when (type) {
+                            "header" -> {
+                                val tournament = item as Tournament
+                                Text(
+                                    text = tournament.name,
+                                    style = SportFlowTheme.typography.headlineSmall,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                                )
+                            }
+                            "registration" -> {
+                                val registration = item as Registration
+                                RegistrationScheduleCard(
+                                    registration = registration,
+                                    relatedMatch = findRelatedMatch(registration, roleState.allMatches),
+                                    relatedTournament = findRelatedTournament(registration, roleState.tournaments)
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -72,7 +72,7 @@ fun BracketViewScreen(
                 }
                 Column {
                     Text(
-                        text = "Tournament Bracket",
+                        text = "Tournament Tournament",
                         style = SportFlowTheme.typography.displayMedium,
                         color = TextPrimary
                     )
@@ -164,7 +164,7 @@ fun BracketViewScreen(
                 }
             }
 
-            // Bracket Tree
+            // Tournament Tree
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -185,18 +185,18 @@ fun BracketViewScreen(
                 if (uiState.bracketNodes.isNotEmpty()) {
                     BracketTree(nodes = uiState.bracketNodes)
                 } else {
-                    EmptyBracketState()
+                    EmptyTournamentState()
                 }
             }
         }
     }
 }
 
-// ── Bracket Tree ─────────────────────────────────────────────────────────────
+// ── Tournament Tree ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun BracketTree(nodes: List<BracketNode>) {
-    val rounds = nodes.groupBy { it.round }.toSortedMap()
+    val rounds = nodes.groupBy { node: BracketNode -> node.round }.toSortedMap()
     val roundLabels = mapOf(
         1 to "Quarter Finals",
         2 to "Semi Finals",
@@ -218,10 +218,10 @@ private fun BracketTree(nodes: List<BracketNode>) {
                 // Round label
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = if (round == rounds.keys.max()) GnitsOrangeLight else OffWhite,
+                    color = if (round == rounds.keys.maxOrNull()) GnitsOrangeLight else OffWhite,
                     border = androidx.compose.foundation.BorderStroke(
                         1.dp,
-                        if (round == rounds.keys.max()) GnitsOrange.copy(alpha = 0.5f) else CardBorder
+                        if (round == rounds.keys.maxOrNull()) GnitsOrange.copy(alpha = 0.5f) else CardBorder
                     )
                 ) {
                     Text(
@@ -229,7 +229,7 @@ private fun BracketTree(nodes: List<BracketNode>) {
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         style = SportFlowTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
-                        color = if (round == rounds.keys.max()) GnitsOrangeDark else TextSecondary
+                        color = if (round == rounds.keys.maxOrNull()) GnitsOrangeDark else TextSecondary
                     )
                 }
 
@@ -249,14 +249,14 @@ private fun BracketTree(nodes: List<BracketNode>) {
                     matchNodes.forEach { node ->
                         BracketMatchNode(
                             node = node,
-                            isFinal = round == rounds.keys.max()
+                            isFinal = round == rounds.keys.maxOrNull()
                         )
                     }
                 }
             }
 
             // Connector lines
-            if (round < rounds.keys.max()) {
+            if (round < (rounds.keys.maxOrNull() ?: 0)) {
                 Box(
                     modifier = Modifier
                         .width(32.dp)
@@ -280,7 +280,7 @@ private fun BracketTree(nodes: List<BracketNode>) {
     }
 }
 
-// ── Bracket Node ─────────────────────────────────────────────────────────────
+// ── Tournament Node ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun BracketMatchNode(
@@ -326,7 +326,7 @@ private fun BracketMatchNode(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            BracketTeamRow(
+            TournamentTeamRow(
                 teamName = node.teamA ?: "TBD",
                 score = node.scoreA,
                 isWinner = node.winner == node.teamA,
@@ -339,7 +339,7 @@ private fun BracketMatchNode(
                 thickness = 0.5.dp
             )
 
-            BracketTeamRow(
+            TournamentTeamRow(
                 teamName = node.teamB ?: "TBD",
                 score = node.scoreB,
                 isWinner = node.winner == node.teamB,
@@ -350,7 +350,7 @@ private fun BracketMatchNode(
 }
 
 @Composable
-private fun BracketTeamRow(
+private fun TournamentTeamRow(
     teamName: String,
     score: Int?,
     isWinner: Boolean,
@@ -400,7 +400,7 @@ private fun BracketTeamRow(
 // ── Empty State ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun EmptyBracketState() {
+private fun EmptyTournamentState() {
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
@@ -427,14 +427,14 @@ private fun EmptyBracketState() {
                 }
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    text = "No Bracket Yet",
+                    text = "No Tournament Yet",
                     style = SportFlowTheme.typography.headlineLarge,
                     color = TextPrimary,
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "The bracket hasn't been\ngenerated yet.",
+                    text = "The Tournament hasn't been\ngenerated yet.",
                     style = SportFlowTheme.typography.bodyMedium,
                     color = TextSecondary,
                     textAlign = TextAlign.Center

@@ -226,7 +226,7 @@ fun HomeFeedScreen(
                         tournament = uiState.tournaments.first(),
                         onClick = {
                             navController.navigate(
-                                "bracket?tournamentId=${uiState.tournaments.first().id}"
+                                "tournament?tournamentId=${uiState.tournaments.first().id}"
                             )
                         }
                     )
@@ -286,7 +286,7 @@ fun HomeFeedScreen(
                             TournamentFeedCard(
                                 tournament = feedItem,
                                 onClick = {
-                                    navController.navigate("bracket?tournamentId=${feedItem.id}")
+                                    navController.navigate("tournament?tournamentId=${feedItem.id}")
                                 }
                             )
                         }

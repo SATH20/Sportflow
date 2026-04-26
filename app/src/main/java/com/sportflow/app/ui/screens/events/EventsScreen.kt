@@ -139,7 +139,7 @@ fun EventsScreen(
                     isAdmin = registrationState.currentUser?.role == UserRole.ADMIN,
                     onRegister = { selectedTournament = tournament },
                     onClick = {
-                        navController.navigate("bracket?tournamentId=${tournament.id}")
+                        navController.navigate("tournament?tournamentId=${tournament.id}")
                     }
                 )
             }

@@ -109,7 +109,7 @@ fun UpdatesScreen(
                     onClick = {
                         when {
                             announcement.matchId.isNotBlank() -> navController.navigate("live")
-                            announcement.tournamentId.isNotBlank() -> navController.navigate("bracket?tournamentId=${announcement.tournamentId}")
+                            announcement.tournamentId.isNotBlank() -> navController.navigate("tournament?tournamentId=${announcement.tournamentId}")
                         }
                     }
                 )

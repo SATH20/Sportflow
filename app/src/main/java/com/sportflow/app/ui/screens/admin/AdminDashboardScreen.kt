@@ -34,8 +34,10 @@ import com.sportflow.app.data.model.*
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AdminViewModel
+import com.sportflow.app.ui.viewmodel.AdminUiState
 import com.sportflow.app.ui.viewmodel.CreateMatchForm
 import com.sportflow.app.ui.viewmodel.CreateTournamentForm
+import com.sportflow.app.ui.viewmodel.CreateTournamentMatchForm
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -60,9 +62,9 @@ fun AdminDashboardScreen(
     var announcementTitle by rememberSaveable { mutableStateOf("") }
     var announcementMessage by rememberSaveable { mutableStateOf("") }
     val tabs = listOf(
-        "Create Tournament", "Live Scoring", "Manual Fixtures",
+        "Create Tournament", "Live Scoring", "Create Match",
         "Manual Editor", "Referee Panel",
-        "Match Management", "Tournaments", "Registration Approvals"
+        "Tournaments", "Registration Approvals"
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -247,9 +249,9 @@ fun AdminDashboardScreen(
                 }
             }
             2 -> {
-                // ── AI FIXTURE ENGINE TAB ────────────────────────────────
-                item { SectionHeader(title = "Manual Fixture Engine") }
-                item { EmptyState("AI fixture generation is removed for this phase. Use tournament approvals and the manual editor to create fixtures.") }
+                // ── MANUAL FIXTURE ENGINE TAB ────────────────────────────
+                item { SectionHeader(title = "Create Match Under Tournament") }
+                item { CreateTournamentMatchFormCard(uiState, viewModel) }
             }
             3 -> {
                 // ── MANUAL FIXTURE EDITOR TAB ────────────────────────────
@@ -321,28 +323,39 @@ fun AdminDashboardScreen(
                 }
             }
             5 -> {
-                // ── ALL MATCHES TAB ──────────────────────────────────────
-                item { SectionHeader(title = "Match Management") }
-                if (uiState.allMatches.isEmpty()) {
-                    item { EmptyState("No matches created yet") }
+                // ── TOURNAMENTS TAB ──────────────────────────────────────
+                item { SectionHeader(title = "Tournament Management") }
+                if (uiState.tournaments.isEmpty()) {
+                    item { EmptyState("No tournaments created yet") }
                 } else {
-                    items(uiState.allMatches) { match ->
-                        AdminMatchCard(match = match)
+                    // Flatten tournaments and their matches into a single list
+                    val tournamentItems = mutableListOf<Pair<String, Any>>()
+                    uiState.tournaments.forEach { tournament ->
+                        tournamentItems.add("tournament" to tournament)
+                        val tournamentMatches = uiState.allMatches.filter { it.tournamentId == tournament.id }
+                        tournamentMatches.forEach { match ->
+                            tournamentItems.add("match" to match)
+                        }
+                    }
+                    
+                    items(tournamentItems.size, key = { tournamentItems[it].hashCode() }) { index ->
+                        val (type, item) = tournamentItems[index]
+                        when (type) {
+                            "tournament" -> {
+                                TournamentManagementCard(
+                                    tournament = item as Tournament,
+                                    isGenerating = uiState.isGeneratingBracket,
+                                    onGenerateBracket = { viewModel.generateBracket((item as Tournament).id) }
+                                )
+                            }
+                            "match" -> {
+                                AdminMatchCard(match = item as Match)
+                            }
+                        }
                     }
                 }
             }
             6 -> {
-                // ── TOURNAMENTS TAB ──────────────────────────────────────
-                item { SectionHeader(title = "Tournament Management") }
-                items(uiState.tournaments) { tournament ->
-                    TournamentManagementCard(
-                        tournament = tournament,
-                        isGenerating = uiState.isGeneratingBracket,
-                        onGenerateBracket = { viewModel.generateBracket(tournament.id) }
-                    )
-                }
-            }
-            7 -> {
                 // ── REGISTRATIONS TAB (Admin Data Bridge) ───────────────────
                 // selectedReg and regFilter are hoisted to the parent Composable scope
 
@@ -684,6 +697,228 @@ private fun CreateTournamentFormCard(
                 icon = Icons.Filled.EmojiEvents,
                 containerColor = GnitsOrange
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CreateTournamentMatchFormCard(
+    uiState: AdminUiState,
+    viewModel: AdminViewModel
+) {
+    val form by viewModel.tournamentMatchForm.collectAsStateWithLifecycle()
+    val venues = GnitsVenue.allNames
+    
+    var tournamentExpanded by remember { mutableStateOf(false) }
+    var venueExpanded by remember { mutableStateOf(false) }
+    var teamAExpanded by remember { mutableStateOf(false) }
+    var teamBExpanded by remember { mutableStateOf(false) }
+
+    // Get approved teams for the selected tournament
+    val approvedTeams = remember(form.selectedTournamentId, uiState.registrations) {
+        if (form.selectedTournamentId.isBlank()) {
+            emptyList<String>()
+        } else {
+            uiState.registrations
+                .filter { reg -> reg.tournamentId == form.selectedTournamentId && reg.status == RegistrationStatus.CONFIRMED }
+                .map { reg -> reg.fixtureUnitName.ifBlank { reg.teamName.ifBlank { reg.userName } } }
+                .distinct()
+                .sorted()
+        }
+    }
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Tournament Selection
+            ExposedDropdownMenuBox(
+                expanded = tournamentExpanded,
+                onExpandedChange = { tournamentExpanded = !tournamentExpanded }
+            ) {
+                OutlinedTextField(
+                    value = uiState.tournaments.find { t -> t.id == form.selectedTournamentId }?.name ?: "",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Select Tournament *") },
+                    placeholder = { Text("Choose a tournament") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tournamentExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = tournamentExpanded,
+                    onDismissRequest = { tournamentExpanded = false }
+                ) {
+                    uiState.tournaments.forEach { tournament ->
+                        DropdownMenuItem(
+                            text = { Text("${tournament.name} (${tournament.sport})") },
+                            onClick = {
+                                viewModel.updateTournamentMatchForm(
+                                    form.copy(
+                                        selectedTournamentId = tournament.id,
+                                        teamA = "",
+                                        teamB = ""
+                                    )
+                                )
+                                tournamentExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (form.selectedTournamentId.isNotBlank()) {
+                if (approvedTeams.isEmpty()) {
+                    Text(
+                        text = "No approved teams for this tournament yet. Approve registrations first.",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = WarningAmber,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                } else {
+                    Text(
+                        text = "${approvedTeams.size} approved team(s) available",
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = SuccessGreen,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
+
+                    // Team A Selection
+                    ExposedDropdownMenuBox(
+                        expanded = teamAExpanded,
+                        onExpandedChange = { teamAExpanded = !teamAExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = form.teamA,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Team A *") },
+                            placeholder = { Text("Select first team") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = teamAExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = teamAExpanded,
+                            onDismissRequest = { teamAExpanded = false }
+                        ) {
+                            approvedTeams.forEach { team ->
+                                DropdownMenuItem(
+                                    text = { Text(team) },
+                                    onClick = {
+                                        viewModel.updateTournamentMatchForm(form.copy(teamA = team))
+                                        teamAExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Team B Selection
+                    ExposedDropdownMenuBox(
+                        expanded = teamBExpanded,
+                        onExpandedChange = { teamBExpanded = !teamBExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = form.teamB,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Team B *") },
+                            placeholder = { Text("Select second team") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = teamBExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = teamBExpanded,
+                            onDismissRequest = { teamBExpanded = false }
+                        ) {
+                            approvedTeams.forEach { team ->
+                                DropdownMenuItem(
+                                    text = { Text(team) },
+                                    onClick = {
+                                        viewModel.updateTournamentMatchForm(form.copy(teamB = team))
+                                        teamBExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Venue Selection
+                    ExposedDropdownMenuBox(
+                        expanded = venueExpanded,
+                        onExpandedChange = { venueExpanded = !venueExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = form.venue,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Venue *") },
+                            placeholder = { Text("Select venue") },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = venueExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = venueExpanded,
+                            onDismissRequest = { venueExpanded = false }
+                        ) {
+                            venues.forEach { venue ->
+                                DropdownMenuItem(
+                                    text = { Text(venue) },
+                                    onClick = {
+                                        viewModel.updateTournamentMatchForm(form.copy(venue = venue))
+                                        venueExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // Scheduled Date/Time
+                    OutlinedTextField(
+                        value = form.scheduledDateText,
+                        onValueChange = { viewModel.updateTournamentMatchForm(form.copy(scheduledDateText = it)) },
+                        label = { Text("Scheduled Time (dd/MM/yyyy HH:mm) *") },
+                        placeholder = { Text("e.g., 25/12/2024 14:30") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        singleLine = true
+                    )
+
+                    // Round
+                    OutlinedTextField(
+                        value = form.round,
+                        onValueChange = { viewModel.updateTournamentMatchForm(form.copy(round = it)) },
+                        label = { Text("Round") },
+                        placeholder = { Text("e.g., Round 1, Quarter Final") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        singleLine = true
+                    )
+
+                    PillButton(
+                        text = "Create Match",
+                        onClick = { viewModel.createTournamentMatch() },
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = Icons.Filled.SportsSoccer,
+                        containerColor = GnitsOrange,
+                        enabled = !uiState.isCreatingMatch
+                    )
+                }
+            } else {
+                Text(
+                    text = "Select a tournament to begin creating matches",
+                    style = SportFlowTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(vertical = 16.dp)
+                )
+            }
         }
     }
 }
@@ -1597,7 +1832,7 @@ private fun TournamentManagementCard(
 
             if (!tournament.bracketGenerated) {
                 PillButton(
-                    text = if (isGenerating) "Generating..." else "Generate Tournament",
+                    text = if (isGenerating) "Generating..." else "Generate Tournament Matches",
                     onClick = onGenerateBracket,
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isGenerating,

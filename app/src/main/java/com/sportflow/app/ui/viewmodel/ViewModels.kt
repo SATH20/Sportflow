@@ -118,6 +118,7 @@ data class RoleHomeUiState(
     val myRegistrations: List<Registration> = emptyList(),
     val pendingRegistrations: List<Registration> = emptyList(),
     val allMatches: List<Match> = emptyList(),
+    val tournaments: List<Tournament> = emptyList(),
     val notifications: List<NotificationItem> = emptyList(),
     val unseenNotificationCount: Int = 0,
     val isLoading: Boolean = true
@@ -188,6 +189,11 @@ class RoleHomeViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getAllMatches().collect { matches ->
                 _uiState.update { it.copy(allMatches = matches) }
+            }
+        }
+        viewModelScope.launch {
+            repository.getTournaments().collect { tournaments ->
+                _uiState.update { it.copy(tournaments = tournaments) }
             }
         }
         viewModelScope.launch {
@@ -350,6 +356,16 @@ data class CreateMatchForm(
     val round: String = ""
 )
 
+/** Form state for creating a match under a tournament with approved teams */
+data class CreateTournamentMatchForm(
+    val selectedTournamentId: String = "",
+    val teamA: String = "",
+    val teamB: String = "",
+    val venue: String = "",
+    val scheduledDateText: String = "",
+    val round: String = "Round 1"
+)
+
 data class CreateTournamentForm(
     val name: String = "",
     val sport: String = "",
@@ -371,6 +387,9 @@ class AdminViewModel @Inject constructor(
 
     private val _matchForm = MutableStateFlow(CreateMatchForm())
     val matchForm: StateFlow<CreateMatchForm> = _matchForm.asStateFlow()
+
+    private val _tournamentMatchForm = MutableStateFlow(CreateTournamentMatchForm())
+    val tournamentMatchForm: StateFlow<CreateTournamentMatchForm> = _tournamentMatchForm.asStateFlow()
 
     private val _tournamentForm = MutableStateFlow(CreateTournamentForm())
     val tournamentForm: StateFlow<CreateTournamentForm> = _tournamentForm.asStateFlow()
@@ -497,6 +516,94 @@ class AdminViewModel @Inject constructor(
                     it.copy(
                         isCreatingMatch = false,
                         successMessage = "Tournament created: ${form.name}"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isCreatingMatch = false, error = e.message)
+                }
+            }
+        }
+    }
+
+    fun updateTournamentMatchForm(form: CreateTournamentMatchForm) {
+        _tournamentMatchForm.update { form }
+    }
+
+    /**
+     * Create a new match under an existing tournament with approved teams.
+     * The match will have status SCHEDULED and appear in Tab 3 (Manual Editor).
+     */
+    fun createTournamentMatch() {
+        val form = _tournamentMatchForm.value
+        if (form.selectedTournamentId.isBlank()) {
+            _uiState.update { it.copy(error = "Please select a tournament") }
+            return
+        }
+        if (form.teamA.isBlank() || form.teamB.isBlank()) {
+            _uiState.update { it.copy(error = "Please select both teams") }
+            return
+        }
+        if (form.teamA == form.teamB) {
+            _uiState.update { it.copy(error = "Teams must be different") }
+            return
+        }
+        if (form.venue.isBlank()) {
+            _uiState.update { it.copy(error = "Please select a venue") }
+            return
+        }
+        if (form.scheduledDateText.isBlank()) {
+            _uiState.update { it.copy(error = "Please enter scheduled date and time") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isCreatingMatch = true) }
+            try {
+                val scheduledTime = parseAdminDateTime(form.scheduledDateText)
+                if (scheduledTime == null) {
+                    _uiState.update {
+                        it.copy(
+                            isCreatingMatch = false,
+                            error = "Use date format dd/MM/yyyy HH:mm for scheduled time"
+                        )
+                    }
+                    return@launch
+                }
+
+                // Find the tournament to get its details
+                val tournament = _uiState.value.tournaments.find { it.id == form.selectedTournamentId }
+                if (tournament == null) {
+                    _uiState.update {
+                        it.copy(
+                            isCreatingMatch = false,
+                            error = "Tournament not found"
+                        )
+                    }
+                    return@launch
+                }
+
+                // Create the match
+                val match = Match(
+                    sportType = tournament.sport,
+                    teamA = form.teamA.trim(),
+                    teamB = form.teamB.trim(),
+                    venue = form.venue,
+                    scheduledTime = scheduledTime,
+                    status = MatchStatus.SCHEDULED,
+                    tournamentId = tournament.id,
+                    tournamentName = tournament.name,
+                    round = form.round.ifBlank { "Round 1" }
+                )
+
+                repository.createMatch(match)
+                
+                // Reset form
+                _tournamentMatchForm.update { CreateTournamentMatchForm() }
+                _uiState.update {
+                    it.copy(
+                        isCreatingMatch = false,
+                        successMessage = "Match created: ${form.teamA} vs ${form.teamB}"
                     )
                 }
             } catch (e: Exception) {

@@ -174,8 +174,8 @@ fun ProfileScreen(
                         navController.navigate("admin")
                     }
                 }
-                QuickActionCard(Icons.Filled.EmojiEvents, "Brackets", InfoBlue, Modifier.weight(1f)) {
-                    navController.navigate("bracket?tournamentId=")
+                QuickActionCard(Icons.Filled.EmojiEvents, "Tournaments", InfoBlue, Modifier.weight(1f)) {
+                    navController.navigate("tournament?tournamentId=")
                 }
                 QuickActionCard(Icons.Filled.Edit, "Edit Profile", WarningAmber, Modifier.weight(1f)) {
                     showEditProfile = true
@@ -364,7 +364,7 @@ fun ProfileScreen(
                     HorizontalDivider(color = CardBorder, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 4.dp))
                     NotifToggleRow(
                         "Tournament Announcements",
-                        "New brackets, fixtures & results",
+                        "New Tournaments, fixtures & results",
                         notifTournament
                     ) {
                         notifTournament = it
@@ -499,7 +499,7 @@ fun ProfileScreen(
                     }
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    FaqItem("How do I join a tournament?", "Your Department Sports Representative will register your team. Once registered, you can track scores and brackets live in this app.")
+                    FaqItem("How do I join a tournament?", "Your Department Sports Representative will register your team. Once registered, you can track scores and Tournaments live in this app.")
                     FaqItem("Why can't I see the Admin tab?", "Only verified Sports Coordinators and Faculty have Admin access. Contact your HOD if you need elevated access.")
                     FaqItem("Live scores not updating?", "Make sure you have an active internet connection. Live scores update within 1–2 seconds via Firebase real-time sync.")
                     FaqItem("My department is wrong, how to change?", "Use the 'Edit Profile' option in Settings to update your department.")
