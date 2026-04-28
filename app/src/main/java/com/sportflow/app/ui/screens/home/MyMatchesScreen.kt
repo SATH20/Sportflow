@@ -536,6 +536,81 @@ private fun MyMatchCard(
                 }
             }
 
+            // Completed match score display
+            if (match.status == MatchStatus.COMPLETED) {
+                Spacer(modifier = Modifier.height(12.dp))
+                val sportScore = SportScoreEngine.formatScore(match)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = SuccessGreen.copy(alpha = 0.08f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = match.teamA,
+                                style = SportFlowTheme.typography.labelLarge,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (sportScore.subText.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = sportScore.subText,
+                                    style = SportFlowTheme.typography.labelSmall,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = sportScore.displayA,
+                                    style = SportFlowTheme.typography.headlineLarge,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "–",
+                                    style = SportFlowTheme.typography.headlineMedium,
+                                    color = TextTertiary
+                                )
+                                Text(
+                                    text = sportScore.displayB,
+                                    style = SportFlowTheme.typography.headlineLarge,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                            if (sportScore.centerText.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = sportScore.centerText,
+                                    style = SportFlowTheme.typography.labelSmall,
+                                    color = SuccessGreen,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        Text(
+                            text = match.teamB,
+                            style = SportFlowTheme.typography.labelLarge,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(14.dp))
 
             // Action row
