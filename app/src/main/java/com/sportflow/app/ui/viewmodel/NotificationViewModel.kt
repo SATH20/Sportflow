@@ -56,6 +56,9 @@ class NotificationViewModel @Inject constructor(
 
     fun openNotificationCenter() {
         _uiState.update { it.copy(showDialog = true) }
+        viewModelScope.launch {
+            repository.updateLastCheckedTimestamp()
+        }
     }
 
     fun closeNotificationCenter() {
@@ -67,6 +70,7 @@ class NotificationViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 repository.markNotificationAsSeen(uid, notificationId)
+                repository.updateLastCheckedTimestamp()
             } catch (_: Exception) {
                 // Non-critical
             }
@@ -78,6 +82,7 @@ class NotificationViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 repository.markAllNotificationsAsSeen(uid)
+                repository.updateLastCheckedTimestamp()
             } catch (_: Exception) {
                 // Non-critical
             }

@@ -146,6 +146,14 @@ class SportFlowRepository @Inject constructor(
         return docRef.id
     }
 
+    /** Delete a match document from the gnits_matches collection */
+    suspend fun deleteMatch(matchId: String) {
+        firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .delete()
+            .await()
+    }
+
     // ── Live Scoring Engine — Sport-Aware Atomic Updates ────────────────────
 
     /**
@@ -691,12 +699,14 @@ class SportFlowRepository @Inject constructor(
     /** Update user profile with registration data */
     suspend fun updateUserProfile(
         uid: String,
+        displayName: String? = null,
         rollNumber: String? = null,
         department: String? = null,
         yearOfStudy: String? = null,
         preferredSportRole: String? = null
     ) {
         val updates = mutableMapOf<String, Any>()
+        displayName?.let { updates["displayName"] = it }
         rollNumber?.let { updates["rollNumber"] = it }
         department?.let { updates["department"] = it }
         yearOfStudy?.let { updates["yearOfStudy"] = it }
@@ -707,6 +717,15 @@ class SportFlowRepository @Inject constructor(
                 .document(uid)
                 .update(updates)
                 .await()
+        }
+        if (!displayName.isNullOrBlank() && auth.currentUser?.uid == uid) {
+            auth.currentUser
+                ?.updateProfile(
+                    com.google.firebase.auth.UserProfileChangeRequest.Builder()
+                        .setDisplayName(displayName)
+                        .build()
+                )
+                ?.await()
         }
     }
 
@@ -765,7 +784,14 @@ class SportFlowRepository @Inject constructor(
         topic: String
     ) {
         try {
-            val dedupeKey = "$type|$matchId|$topic|${body.hashCode()}"
+            // For match_start notifications, deduplicate by type and matchId only
+            // to prevent repeated "Match is LIVE now" notifications
+            val dedupeKey = if (type == "match_start") {
+                "$type|$matchId"
+            } else {
+                "$type|$matchId|$topic|${body.hashCode()}"
+            }
+
             val existingUnseen = firestore.collection(NOTIFICATION_TRIGGERS)
                 .whereEqualTo("dedupeKey", dedupeKey)
                 .whereEqualTo("seen", false)
@@ -2006,6 +2032,16 @@ class SportFlowRepository @Inject constructor(
             .document(registration.uid)
             .set(matchRegistration.copy(id = registration.uid))
             .await()
+
+        if (registration.id.isNotBlank()) {
+            firestore.collection(GNITS_REGISTRATIONS)
+                .document(registration.id)
+                .set(
+                    matchRegistration.copy(id = registration.id),
+                    com.google.firebase.firestore.SetOptions.merge()
+                )
+                .await()
+        }
     }
 
     /**

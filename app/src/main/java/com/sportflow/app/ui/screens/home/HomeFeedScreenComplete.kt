@@ -73,6 +73,8 @@ import com.sportflow.app.data.model.RegistrationStatus
 import com.sportflow.app.data.model.SportUser
 import com.sportflow.app.data.model.Tournament
 import com.sportflow.app.data.model.TournamentStatus
+import com.sportflow.app.data.model.derivedStatus
+import com.sportflow.app.data.model.displayStatusLabel
 import com.sportflow.app.ui.components.SectionHeader
 import com.sportflow.app.ui.components.SportCard
 import com.sportflow.app.ui.theme.GnitsOrange
@@ -112,9 +114,6 @@ fun HomeFeedScreenComplete(
     val adminState by adminViewModel.uiState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
-    var showBroadcastDialog by rememberSaveable { mutableStateOf(false) }
-    var announcementTitle by rememberSaveable { mutableStateOf("") }
-    var announcementMessage by rememberSaveable { mutableStateOf("") }
 
     LaunchedEffect(adminState.successMessage, adminState.error) {
         val message = adminState.successMessage ?: adminState.error
@@ -180,17 +179,6 @@ fun HomeFeedScreenComplete(
                     titleContentColor = Color.White
                 )
             )
-        },
-        floatingActionButton = {
-            if (isAdmin) {
-                FloatingActionButton(
-                    onClick = { showBroadcastDialog = true },
-                    containerColor = GnitsOrange,
-                    contentColor = Color.White
-                ) {
-                    Icon(Icons.Filled.Campaign, contentDescription = "Broadcast")
-                }
-            }
         }
     ) { innerPadding ->
         LazyColumn(
@@ -246,13 +234,9 @@ fun HomeFeedScreenComplete(
                 if (roleState.myRegistrations.isEmpty()) {
                     item { EmptyHomeCard("No registrations yet. Join a tournament or match to see it here.") }
                 } else {
-                    // Group registrations by tournament
                     val registrationsByTournament = roleState.myRegistrations.groupBy { it.tournamentId }
-                    
-                    // Flatten into a single list with headers
                     val displayItems = mutableListOf<Pair<String, Any>>()
-                    
-                    // Add tournament registrations only (no standalone matches)
+
                     registrationsByTournament.forEach { (tournamentId, regs) ->
                         if (tournamentId.isNotBlank()) {
                             val tournament = findRelatedTournament(regs.first(), roleState.tournaments)
@@ -261,9 +245,19 @@ fun HomeFeedScreenComplete(
                                 regs.forEach { reg ->
                                     displayItems.add("registration" to reg)
                                 }
+                            } else {
+                                regs.forEach { reg ->
+                                    displayItems.add("registration" to reg)
+                                }
                             }
                         }
                     }
+
+                    roleState.myRegistrations
+                        .filter { it.tournamentId.isBlank() }
+                        .forEach { registration ->
+                            displayItems.add("registration" to registration)
+                        }
                     
                     items(displayItems.size, key = { displayItems[it].hashCode() }) { index ->
                         val (type, item) = displayItems[index]
@@ -299,53 +293,6 @@ fun HomeFeedScreenComplete(
             onDismiss = { notificationViewModel.closeNotificationCenter() },
             onMarkAllSeen = { notificationViewModel.markAllSeen() },
             onNotificationClick = { notificationViewModel.markSeen(it.id) }
-        )
-    }
-
-    if (showBroadcastDialog) {
-        AlertDialog(
-            onDismissRequest = { showBroadcastDialog = false },
-            title = { Text("Broadcast Update") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    androidx.compose.material3.OutlinedTextField(
-                        value = announcementTitle,
-                        onValueChange = { announcementTitle = it },
-                        label = { Text("Title") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    androidx.compose.material3.OutlinedTextField(
-                        value = announcementMessage,
-                        onValueChange = { announcementMessage = it },
-                        label = { Text("Message") },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 4
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        adminViewModel.postAnnouncement(
-                            announcementTitle,
-                            announcementMessage,
-                            com.sportflow.app.data.model.AnnouncementCategory.GENERAL
-                        )
-                        announcementTitle = ""
-                        announcementMessage = ""
-                        showBroadcastDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = GnitsOrange)
-                ) {
-                    Text("Post")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showBroadcastDialog = false }) {
-                    Text("Cancel")
-                }
-            }
         )
     }
 }
@@ -446,13 +393,15 @@ private fun RegistrationScheduleCard(
     relatedTournament: Tournament?
 ) {
     val statusBadgeText = when {
-        relatedMatch?.status == MatchStatus.COMPLETED -> "Match Completed"
-        registration.status == RegistrationStatus.CONFIRMED -> "Approved"
+        relatedMatch != null -> relatedMatch.displayStatusLabel()
+        registration.status == RegistrationStatus.CONFIRMED -> "Upcoming"
+        registration.status == RegistrationStatus.CANCELLED -> "Cancelled"
         else -> "Pending"
     }
     val statusBadgeColor = when {
-        relatedMatch?.status == MatchStatus.COMPLETED -> InfoBlue
-        registration.status == RegistrationStatus.CONFIRMED -> SuccessGreen
+        relatedMatch != null -> matchStatusColor(relatedMatch.derivedStatus())
+        registration.status == RegistrationStatus.CONFIRMED -> InfoBlue
+        registration.status == RegistrationStatus.CANCELLED -> TextTertiary
         else -> WarningAmber
     }
 
@@ -590,12 +539,8 @@ private fun TimelineMatchCard(match: Match) {
                 )
             }
             StatusPill(
-                text = match.status.name.replace("_", " "),
-                color = when (match.status) {
-                    MatchStatus.COMPLETED -> InfoBlue
-                    MatchStatus.LIVE -> LiveRed
-                    else -> GnitsOrange
-                }
+                text = match.displayStatusLabel(),
+                color = matchStatusColor(match.derivedStatus())
             )
         }
     }
@@ -732,6 +677,15 @@ private fun formatTimestamp(timestamp: Timestamp?): String {
     if (timestamp == null) return "TBD"
     val formatter = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
     return formatter.format(timestamp.toDate())
+}
+
+private fun matchStatusColor(status: MatchStatus): Color {
+    return when (status) {
+        MatchStatus.SCHEDULED -> InfoBlue
+        MatchStatus.LIVE, MatchStatus.HALFTIME -> LiveRed
+        MatchStatus.COMPLETED -> SuccessGreen
+        MatchStatus.CANCELLED -> TextTertiary
+    }
 }
 
 @Composable

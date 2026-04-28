@@ -171,6 +171,63 @@ class RegistrationViewModel @Inject constructor(
     }
 
     /**
+     * Quick register for tournament using current user's profile data.
+     * Bypasses the 3-step wizard for faster registration.
+     */
+    fun quickRegisterForTournament(tournament: Tournament) {
+        val currentUser = _uiState.value.currentUser
+        if (currentUser == null) {
+            _uiState.update { it.copy(error = "Please complete your profile first") }
+            return
+        }
+
+        val sportType = SportType.fromString(tournament.sport)
+        if (sportType != SportType.BADMINTON && sportType != SportType.TABLE_TENNIS) {
+            _uiState.update {
+                it.copy(error = "Use Register to submit captain, team name, and squad details for this tournament")
+            }
+            return
+        }
+        if (currentUser.rollNumber.isBlank() || currentUser.department.isBlank() ||
+            currentUser.yearOfStudy.isBlank()) {
+            _uiState.update { it.copy(error = "Please complete your profile with roll number, department, and year") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, error = null) }
+            try {
+                val payload = RegistrationPayload(
+                    rollNumber = currentUser.rollNumber,
+                    email = currentUser.email,
+                    department = currentUser.department,
+                    yearOfStudy = currentUser.yearOfStudy,
+                    sportRole = currentUser.preferredSportRole.ifBlank { "Player" },
+                    registrationKind = com.sportflow.app.data.model.RegistrationKind.INDIVIDUAL,
+                    teamName = "",
+                    captainName = currentUser.displayName,
+                    captainPhone = "",
+                    roster = emptyList(),
+                    partnerName = "",
+                    partnerRollNumber = "",
+                    partnerRole = ""
+                )
+                repository.registerForTournament(tournament, payload)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        successMessage = "✅ Quick registered for ${tournament.name}!"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(isLoading = false, error = e.message ?: "Quick registration failed")
+                }
+            }
+        }
+    }
+
+    /**
      * Simple register (from Home feed quick-register button).
      * Used by HomeFeedScreen which passes a UserRole.
      */

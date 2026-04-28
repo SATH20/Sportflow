@@ -100,6 +100,28 @@ class AuthViewModel @Inject constructor(
     fun clearError() {
         _uiState.update { it.copy(error = null) }
     }
+
+    fun updateProfile(
+        displayName: String,
+        rollNumber: String,
+        department: String,
+        yearOfStudy: String
+    ) {
+        val uid = repository.getCurrentUser()?.uid ?: return
+        viewModelScope.launch {
+            try {
+                repository.updateUserProfile(
+                    uid = uid,
+                    displayName = displayName,
+                    rollNumber = rollNumber,
+                    department = department,
+                    yearOfStudy = yearOfStudy
+                )
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message ?: "Profile update failed") }
+            }
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -140,21 +162,25 @@ class HomeViewModel @Inject constructor(
         // Listen for live matches — real-time updates from gnits_matches
         viewModelScope.launch {
             try {
-                repository.getLiveMatches().collect { matches ->
-                    _uiState.update { it.copy(liveMatches = matches, isLoading = false) }
+                repository.getAllMatches().collect { matches ->
+                    val liveMatches = matches
+                        .filter { it.derivedStatus() == MatchStatus.LIVE }
+                        .sortedBy { it.scheduledTime }
+                    val upcomingMatches = matches
+                        .filter { it.derivedStatus() == MatchStatus.SCHEDULED }
+                        .sortedBy { it.scheduledTime }
+
+                    _uiState.update {
+                        it.copy(
+                            liveMatches = liveMatches,
+                            upcomingMatches = upcomingMatches,
+                            isLoading = false
+                        )
+                    }
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }
-        }
-
-        // Listen for scheduled/upcoming matches
-        viewModelScope.launch {
-            try {
-                repository.getScheduledMatches().collect { matches ->
-                    _uiState.update { it.copy(upcomingMatches = matches, isLoading = false) }
-                }
-            } catch (_: Exception) {}
         }
 
         // Listen for tournaments
@@ -578,6 +604,24 @@ class AdminViewModel @Inject constructor(
                         it.copy(
                             isCreatingMatch = false,
                             error = "Tournament not found"
+                        )
+                    }
+                    return@launch
+                }
+
+                // Check for duplicate match (same teams in same round)
+                val existingMatch = _uiState.value.allMatches.find { match ->
+                    match.tournamentId == tournament.id &&
+                    match.round == form.round.ifBlank { "Round 1" } &&
+                    ((match.teamA == form.teamA.trim() && match.teamB == form.teamB.trim()) ||
+                     (match.teamA == form.teamB.trim() && match.teamB == form.teamA.trim()))
+                }
+
+                if (existingMatch != null) {
+                    _uiState.update {
+                        it.copy(
+                            isCreatingMatch = false,
+                            error = "Match already exists: ${form.teamA} vs ${form.teamB} in ${form.round.ifBlank { "Round 1" }}"
                         )
                     }
                     return@launch
@@ -1019,6 +1063,19 @@ class AdminViewModel @Inject constructor(
         _uiState.update { it.copy(successMessage = null, error = null) }
     }
 
+    // ── Match Management ─────────────────────────────────────────────────────
+
+    fun deleteMatch(matchId: String) {
+        viewModelScope.launch {
+            try {
+                repository.deleteMatch(matchId)
+                _uiState.update { it.copy(successMessage = "Match deleted successfully") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = e.message ?: "Failed to delete match") }
+            }
+        }
+    }
+
     // ── Admin Registration Detail View ────────────────────────────────────
 
     fun selectRegistration(registration: Registration) {
@@ -1099,21 +1156,6 @@ class AdminViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(isGeneratingBracket = false, error = e.message ?: "Fixture generation failed")
                 }
-            }
-        }
-    }
-
-    fun postAnnouncement(title: String, message: String, category: AnnouncementCategory) {
-        if (title.isBlank() || message.isBlank()) {
-            _uiState.update { it.copy(error = "Announcement title and message are required") }
-            return
-        }
-        viewModelScope.launch {
-            try {
-                repository.createAnnouncement(title.trim(), message.trim(), category)
-                _uiState.update { it.copy(successMessage = "Announcement posted") }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(error = e.message) }
             }
         }
     }

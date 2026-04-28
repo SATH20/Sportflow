@@ -27,15 +27,25 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import androidx.hilt.navigation.compose.hiltViewModel
-import com.sportflow.app.data.repository.SportFlowRepository
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import com.sportflow.app.data.model.GnitsDepartment
+import com.sportflow.app.data.model.GnitsYear
 import com.sportflow.app.data.model.UserRole
+import com.sportflow.app.data.repository.SportFlowRepository
 import com.sportflow.app.ui.components.*
 import com.sportflow.app.ui.theme.*
 import com.sportflow.app.ui.viewmodel.AuthViewModel
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
+
+@EntryPoint
+@InstallIn(SingletonComponent::class)
+interface ProfileScreenEntryPoint {
+    fun repository(): SportFlowRepository
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +57,12 @@ fun ProfileScreen(
     val authState by authViewModel.uiState.collectAsStateWithLifecycle()
     val user = authState.currentUser
     val context = LocalContext.current
+    val resolvedRepository = remember(context, repository) {
+        repository ?: EntryPointAccessors.fromApplication(
+            context.applicationContext,
+            ProfileScreenEntryPoint::class.java
+        ).repository()
+    }
 
     // ── Dialog / Sheet States ─────────────────────────────────────────────
     var showEditProfile by remember { mutableStateOf(false) }
@@ -59,7 +75,9 @@ fun ProfileScreen(
     var editName by remember(user) { mutableStateOf(user?.displayName ?: "") }
     var editRoll by remember(user) { mutableStateOf(user?.rollNumber ?: "") }
     var editDept by remember(user) { mutableStateOf(user?.department ?: "") }
+    var editYear by remember(user) { mutableStateOf(user?.yearOfStudy ?: "") }
     var deptExpanded by remember { mutableStateOf(false) }
+    var yearExpanded by remember { mutableStateOf(false) }
 
     // ── Notification prefs — backed by FCM topic subscriptions ──────────
     var notifMatchStart by remember { mutableStateOf(true) }
@@ -68,8 +86,8 @@ fun ProfileScreen(
     var notifPayment by remember { mutableStateOf(true) }
 
     // Subscribe to default topics when screen first loads
-    LaunchedEffect(Unit) {
-        repository?.subscribeToDefaultTopics(user?.department ?: "")
+    LaunchedEffect(user?.department) {
+        resolvedRepository.subscribeToDefaultTopics(user?.department ?: "")
     }
 
     // ── Main Screen ───────────────────────────────────────────────────────
@@ -175,7 +193,7 @@ fun ProfileScreen(
                     }
                 }
                 QuickActionCard(Icons.Filled.EmojiEvents, "Tournaments", InfoBlue, Modifier.weight(1f)) {
-                    navController.navigate("tournament?tournamentId=")
+                    navController.navigate("events")
                 }
                 QuickActionCard(Icons.Filled.Edit, "Edit Profile", WarningAmber, Modifier.weight(1f)) {
                     showEditProfile = true
@@ -188,10 +206,6 @@ fun ProfileScreen(
         item {
             SportCard(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                 Column {
-                    SettingsRow(Icons.Outlined.Person, "Edit Profile", subtitle = "Update name, roll no & department") {
-                        showEditProfile = true
-                    }
-                    HorizontalDivider(color = CardBorder, thickness = 0.5.dp)
                     SettingsRow(Icons.Outlined.Notifications, "Notifications", subtitle = "Manage match & score alerts") {
                         showNotifications = true
                     }
@@ -300,6 +314,38 @@ fun ProfileScreen(
                         }
                     }
 
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    ExposedDropdownMenuBox(
+                        expanded = yearExpanded,
+                        onExpandedChange = { yearExpanded = !yearExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = GnitsYear.fromCode(editYear)?.displayName ?: editYear,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Year of Study") },
+                            leadingIcon = { Icon(Icons.Filled.CalendarToday, null) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = yearExpanded) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor(),
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = yearExpanded,
+                            onDismissRequest = { yearExpanded = false }
+                        ) {
+                            GnitsYear.entries.forEach { year ->
+                                DropdownMenuItem(
+                                    text = { Text(year.displayName) },
+                                    onClick = {
+                                        editYear = year.name
+                                        yearExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(24.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedButton(
@@ -312,7 +358,12 @@ fun ProfileScreen(
                         PillButton(
                             text = "Save Changes",
                             onClick = {
-                                // Profile update is persisted through the ViewModel/Repository
+                                authViewModel.updateProfile(
+                                    displayName = editName.trim(),
+                                    rollNumber = editRoll.trim(),
+                                    department = editDept,
+                                    yearOfStudy = editYear
+                                )
                                 showEditProfile = false
                             },
                             modifier = Modifier.weight(1f),
@@ -350,7 +401,7 @@ fun ProfileScreen(
                         notifMatchStart
                     ) {
                         notifMatchStart = it
-                        repository?.setNotificationCategory(SportFlowRepository.FCM_TOPIC_MATCH_START, it)
+                        resolvedRepository.setNotificationCategory(SportFlowRepository.FCM_TOPIC_MATCH_START, it)
                     }
                     HorizontalDivider(color = CardBorder, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 4.dp))
                     NotifToggleRow(
@@ -359,7 +410,7 @@ fun ProfileScreen(
                         notifScoreUpdate
                     ) {
                         notifScoreUpdate = it
-                        repository?.setNotificationCategory(SportFlowRepository.FCM_TOPIC_SCORES, it)
+                        resolvedRepository.setNotificationCategory(SportFlowRepository.FCM_TOPIC_SCORES, it)
                     }
                     HorizontalDivider(color = CardBorder, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 4.dp))
                     NotifToggleRow(
@@ -368,7 +419,7 @@ fun ProfileScreen(
                         notifTournament
                     ) {
                         notifTournament = it
-                        repository?.setNotificationCategory(SportFlowRepository.FCM_TOPIC_TOURNAMENT, it)
+                        resolvedRepository.setNotificationCategory(SportFlowRepository.FCM_TOPIC_TOURNAMENT, it)
                     }
                     HorizontalDivider(color = CardBorder, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 4.dp))
                     NotifToggleRow(
@@ -377,7 +428,7 @@ fun ProfileScreen(
                         notifPayment
                     ) {
                         notifPayment = it
-                        repository?.setNotificationCategory(SportFlowRepository.FCM_TOPIC_PAYMENT, it)
+                        resolvedRepository.setNotificationCategory(SportFlowRepository.FCM_TOPIC_PAYMENT, it)
                     }
 
                     Spacer(modifier = Modifier.height(20.dp))

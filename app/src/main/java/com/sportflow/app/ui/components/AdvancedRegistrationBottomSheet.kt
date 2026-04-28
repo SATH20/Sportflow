@@ -75,7 +75,12 @@ fun AdvancedRegistrationBottomSheet(
     }
     val isPairSport = sportType == SportType.BADMINTON || sportType == SportType.TABLE_TENNIS
     
-    val maxSteps = if (isTeamSport || isPairSport) 3 else 2
+    // For pair sports, skip role selection in Step 2 (it's handled in Step 3)
+    val maxSteps = when {
+        isPairSport -> 2  // Step 1: Basic Info, Step 2: Singles/Doubles selection
+        isTeamSport -> 3  // Step 1: Basic Info, Step 2: Role, Step 3: Squad
+        else -> 2         // Step 1: Basic Info, Step 2: Role
+    }
     
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -135,8 +140,8 @@ fun AdvancedRegistrationBottomSheet(
                 },
                 label = "step_transition"
             ) { step ->
-                when (step) {
-                    1 -> Step1BasicInfo(
+                when {
+                    step == 1 -> Step1BasicInfo(
                         rollNumber = rollNumber,
                         onRollNumberChange = { rollNumber = it },
                         email = email,
@@ -146,12 +151,29 @@ fun AdvancedRegistrationBottomSheet(
                         selectedYear = selectedYear,
                         onYearChange = { selectedYear = it }
                     )
-                    2 -> Step2RoleSelection(
-                        sportType = match.sportType,
-                        selectedRole = selectedRole,
-                        onRoleChange = { selectedRole = it }
-                    )
-                    3 -> if (isTeamSport) {
+                    step == 2 && isPairSport -> {
+                        // For pair sports, Step 2 is Singles/Doubles selection
+                        Step2PairSportSelection(
+                            sportType = match.sportType,
+                            mode = badmintonMode,
+                            onModeChange = { badmintonMode = it },
+                            partnerName = partnerName,
+                            onPartnerNameChange = { partnerName = it },
+                            partnerRollNumber = partnerRollNumber,
+                            onPartnerRollNumberChange = { partnerRollNumber = it },
+                            partnerRole = partnerRole,
+                            onPartnerRoleChange = { partnerRole = it }
+                        )
+                    }
+                    step == 2 && !isPairSport -> {
+                        // For team/individual sports, Step 2 is role selection
+                        Step2RoleSelection(
+                            sportType = match.sportType,
+                            selectedRole = selectedRole,
+                            onRoleChange = { selectedRole = it }
+                        )
+                    }
+                    step == 3 && isTeamSport -> {
                         Step3SquadDetails(
                             sportType = match.sportType,
                             squadName = squadName,
@@ -162,17 +184,6 @@ fun AdvancedRegistrationBottomSheet(
                             onCaptainPhoneChange = { captainPhone = it },
                             roster = roster,
                             onRosterChange = { roster = it }
-                        )
-                    } else {
-                        Step3BadmintonDetails(
-                            mode = badmintonMode,
-                            onModeChange = { badmintonMode = it },
-                            partnerName = partnerName,
-                            onPartnerNameChange = { partnerName = it },
-                            partnerRollNumber = partnerRollNumber,
-                            onPartnerRollNumberChange = { partnerRollNumber = it },
-                            partnerRole = partnerRole,
-                            onPartnerRoleChange = { partnerRole = it }
                         )
                     }
                 }
@@ -238,11 +249,15 @@ fun AdvancedRegistrationBottomSheet(
                         }
                     },
                     modifier = Modifier.weight(1f),
-                    enabled = when (currentStep) {
-                        1 -> rollNumber.isNotBlank() && email.isNotBlank() && 
+                    enabled = when {
+                        currentStep == 1 -> rollNumber.isNotBlank() && email.isNotBlank() &&
                              selectedDepartment.isNotBlank() && selectedYear.isNotBlank()
-                        2 -> selectedRole.isNotBlank()
-                        3 -> if (isTeamSport) {
+                        currentStep == 2 && isPairSport -> {
+                            badmintonMode == RegistrationKind.BADMINTON_SINGLES ||
+                                (partnerName.isNotBlank() && partnerRollNumber.isNotBlank())
+                        }
+                        currentStep == 2 && !isPairSport -> selectedRole.isNotBlank()
+                        currentStep == 3 && isTeamSport -> {
                             squadName.isNotBlank() && captainName.isNotBlank() &&
                                 captainPhone.isNotBlank() && roster.isNotEmpty() &&
                                 roster.all { player ->
@@ -250,9 +265,6 @@ fun AdvancedRegistrationBottomSheet(
                                         player.rollNumber.isNotBlank() &&
                                         (player.role.isNotBlank() || (roster.indexOf(player) == 0 && selectedRole.isNotBlank()))
                                 }
-                        } else {
-                            badmintonMode == RegistrationKind.BADMINTON_SINGLES ||
-                                (partnerName.isNotBlank() && partnerRollNumber.isNotBlank())
                         }
                         else -> false
                     },
@@ -683,7 +695,8 @@ private fun SquadPlayerEditor(
 }
 
 @Composable
-private fun Step3BadmintonDetails(
+private fun Step2PairSportSelection(
+    sportType: String,
     mode: RegistrationKind,
     onModeChange: (RegistrationKind) -> Unit,
     partnerName: String,
@@ -695,7 +708,7 @@ private fun Step3BadmintonDetails(
 ) {
     Column {
         Text(
-            text = "Step 3: Badminton Entry",
+            text = "Step 2: $sportType Entry",
             style = SportFlowTheme.typography.headlineSmall,
             color = TextPrimary,
             fontWeight = FontWeight.Bold

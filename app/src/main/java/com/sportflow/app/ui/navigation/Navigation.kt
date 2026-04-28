@@ -67,7 +67,6 @@ private val playerNavItems = listOf(
 private val adminNavItems = listOf(
     Screen.Home,
     Screen.Events,
-    Screen.Updates,
     Screen.Admin,
     Screen.Profile
 )
@@ -170,11 +169,18 @@ fun SportFlowNavHost() {
 
             // ── Events (both roles) ───────────────────────────────────────
             composable(Screen.Events.route) {
-                EventsScreen(navController = navController)
+                EventsScreen(
+                    navController = navController,
+                    isAdmin = isAdmin
+                )
             }
 
-            composable(Screen.Updates.route) {
-                UpdatesScreen(navController = navController)
+            // ── Updates — PLAYER ONLY ─────────────────────────────────────
+            // Physically absent (composable not registered) for ADMIN sessions.
+            if (!isAdmin) {
+                composable(Screen.Updates.route) {
+                    UpdatesScreen(navController = navController)
+                }
             }
 
             // ── My Matches — PLAYER ONLY ──────────────────────────────────

@@ -52,6 +52,7 @@ fun LoginScreen(
     var selectedDepartment by remember { mutableStateOf("") }
     var isSignUp by remember { mutableStateOf(false) }
     var passwordVisible by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
 
     // Navigate on success
     LaunchedEffect(uiState.isLoggedIn) {
@@ -236,13 +237,23 @@ fun LoginScreen(
                         imeAction = ImeAction.Done,
                         onImeAction = {
                             focusManager.clearFocus()
-                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, "")
-                            else viewModel.signIn(email, password)
+                            localError = validateAuthForm(
+                                isSignUp = isSignUp,
+                                email = email,
+                                password = password,
+                                name = name,
+                                rollNumber = rollNumber,
+                                department = selectedDepartment
+                            )
+                            if (localError == null) {
+                                if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
+                                else viewModel.signIn(email, password)
+                            }
                         }
                     )
 
                     // Error
-                    uiState.error?.let { error ->
+                    (localError ?: uiState.error)?.let { error ->
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
                             text = error,
@@ -259,8 +270,18 @@ fun LoginScreen(
                         else if (isSignUp) "Create Account"
                         else "Sign In",
                         onClick = {
-                            if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
-                            else viewModel.signIn(email, password)
+                            localError = validateAuthForm(
+                                isSignUp = isSignUp,
+                                email = email,
+                                password = password,
+                                name = name,
+                                rollNumber = rollNumber,
+                                department = selectedDepartment
+                            )
+                            if (localError == null) {
+                                if (isSignUp) viewModel.signUp(email, password, name, rollNumber, selectedDepartment)
+                                else viewModel.signIn(email, password)
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !uiState.isLoading && email.isNotBlank() && password.isNotBlank() &&
@@ -271,7 +292,11 @@ fun LoginScreen(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     // Toggle sign in / sign up
-                    TextButton(onClick = { isSignUp = !isSignUp }) {
+                    TextButton(onClick = {
+                        isSignUp = !isSignUp
+                        localError = null
+                        viewModel.clearError()
+                    }) {
                         Text(
                             text = if (isSignUp) "Already have an account? Sign In"
                             else "Don't have an account? Sign Up",
@@ -283,6 +308,35 @@ fun LoginScreen(
             }
         }
     }
+}
+
+private fun validateAuthForm(
+    isSignUp: Boolean,
+    email: String,
+    password: String,
+    name: String,
+    rollNumber: String,
+    department: String
+): String? {
+    if (email.isBlank() || !email.contains("@")) {
+        return "Enter a valid email address"
+    }
+    if (password.length < 6) {
+        return "Password must be at least 6 characters"
+    }
+    if (!isSignUp) {
+        return null
+    }
+    if (name.isBlank()) {
+        return "Full name is required"
+    }
+    if (rollNumber.isBlank()) {
+        return "Roll number is required"
+    }
+    if (department.isBlank()) {
+        return "Select your department"
+    }
+    return null
 }
 
 @Composable

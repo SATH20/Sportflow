@@ -41,6 +41,21 @@ fun BracketViewScreen(
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
 
+    LaunchedEffect(tournamentId, uiState.tournaments) {
+        val requestedTournament = uiState.tournaments.firstOrNull { it.id == tournamentId }
+        when {
+            requestedTournament != null &&
+                requestedTournament.id != uiState.selectedTournament?.id -> {
+                viewModel.selectTournament(requestedTournament)
+            }
+            tournamentId.isBlank() &&
+                uiState.selectedTournament == null &&
+                uiState.tournaments.isNotEmpty() -> {
+                viewModel.selectTournament(uiState.tournaments.first())
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -72,7 +87,7 @@ fun BracketViewScreen(
                 }
                 Column {
                     Text(
-                        text = "Tournament Tournament",
+                        text = "Tournament Bracket",
                         style = SportFlowTheme.typography.displayMedium,
                         color = TextPrimary
                     )

@@ -45,6 +45,7 @@ fun MyMatchesScreenComplete(
     var selectedTab by remember { mutableIntStateOf(0) }
     var showCancelDialog by remember { mutableStateOf(false) }
     var matchToCancel by remember { mutableStateOf<Match?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     val tabs = listOf("Upcoming", "Live", "Completed")
 
@@ -58,6 +59,7 @@ fun MyMatchesScreenComplete(
                 )
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = Color(0xFFF5F5F5)
     ) { padding ->
         Column(
@@ -82,9 +84,9 @@ fun MyMatchesScreenComplete(
 
             // Filtered matches
             val filteredMatches = when (selectedTab) {
-                0 -> myMatches.filter { it.status == MatchStatus.SCHEDULED }
-                1 -> myMatches.filter { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
-                2 -> myMatches.filter { it.status == MatchStatus.COMPLETED }
+                0 -> myMatches.filter { it.derivedStatus() == MatchStatus.SCHEDULED }
+                1 -> myMatches.filter { it.derivedStatus() == MatchStatus.LIVE }
+                2 -> myMatches.filter { it.derivedStatus() == MatchStatus.COMPLETED }
                 else -> emptyList()
             }
 
@@ -169,9 +171,9 @@ fun MyMatchesScreenComplete(
     }
 
     // Show success/error messages
-    val snackbarHostState = remember { SnackbarHostState() }
-    LaunchedEffect(regState.successMessage) {
-        regState.successMessage?.let {
+    LaunchedEffect(regState.successMessage, regState.error) {
+        val message = regState.successMessage ?: regState.error
+        message?.let {
             snackbarHostState.showSnackbar(it)
             registrationViewModel.clearMessages()
         }
@@ -185,11 +187,13 @@ fun MyMatchCard(
     onCancel: () -> Unit,
     onNavigateToLive: () -> Unit
 ) {
+    val derivedStatus = match.derivedStatus()
+
     GlassmorphicCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        onClick = { if (match.status == MatchStatus.LIVE) onNavigateToLive() }
+        onClick = { if (derivedStatus == MatchStatus.LIVE) onNavigateToLive() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Sport badge and status
@@ -253,7 +257,7 @@ fun MyMatchCard(
 
                     // Match status badge
                     Surface(
-                        color = when (match.status) {
+                        color = when (derivedStatus) {
                             MatchStatus.LIVE -> LiveRed
                             MatchStatus.SCHEDULED -> InfoBlue
                             MatchStatus.COMPLETED -> SuccessGreen
@@ -262,7 +266,7 @@ fun MyMatchCard(
                         shape = RoundedCornerShape(8.dp)
                     ) {
                         Text(
-                            text = match.status.name,
+                            text = match.displayStatusLabel(),
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                             style = SportFlowTheme.typography.labelSmall,
                             color = Color.White,
@@ -339,7 +343,7 @@ fun MyMatchCard(
             }
 
             // Cancel button (only for scheduled matches)
-            if (match.status == MatchStatus.SCHEDULED) {
+            if (derivedStatus == MatchStatus.SCHEDULED) {
                 Spacer(Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = onCancel,
@@ -356,7 +360,7 @@ fun MyMatchCard(
             }
 
             // View live button (for live matches)
-            if (match.status == MatchStatus.LIVE || match.status == MatchStatus.HALFTIME) {
+            if (derivedStatus == MatchStatus.LIVE) {
                 Spacer(Modifier.height(12.dp))
                 PremiumButton(
                     text = "Watch Live",
@@ -368,7 +372,7 @@ fun MyMatchCard(
             }
 
             // Score display (for completed matches)
-            if (match.status == MatchStatus.COMPLETED) {
+            if (derivedStatus == MatchStatus.COMPLETED) {
                 Spacer(Modifier.height(12.dp))
                 Surface(
                     color = ScreenBg,
