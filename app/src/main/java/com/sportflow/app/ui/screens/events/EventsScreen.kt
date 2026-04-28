@@ -35,7 +35,7 @@ import com.sportflow.app.ui.viewmodel.RegistrationViewModel
 @Composable
 fun EventsScreen(
     navController: NavHostController,
-    isAdmin: Boolean,
+    isAdmin: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(),
     registrationViewModel: RegistrationViewModel = hiltViewModel()
 ) {
@@ -134,7 +134,7 @@ fun EventsScreen(
 
             items(
                 items = uiState.tournaments.filter {
-                selectedFilter == "All" || it.sport.equals(selectedFilter, ignoreCase = true)
+                    selectedFilter == "All" || it.sport.equals(selectedFilter, ignoreCase = true)
                 },
                 key = { it.id }
             ) { tournament ->
@@ -145,7 +145,9 @@ fun EventsScreen(
                     onRegister = { selectedTournament = tournament },
                     onQuickRegister = { registrationViewModel.quickRegisterForTournament(tournament) },
                     onClick = {
-                        navController.navigate("bracket?tournamentId=${tournament.id}")
+                        if (tournament.id.isNotBlank()) {
+                            navController.navigate("bracket?tournamentId=${tournament.id}")
+                        }
                     }
                 )
             }
@@ -159,13 +161,13 @@ fun EventsScreen(
 
             items(
                 items = uiState.upcomingMatches.filter {
-                selectedFilter == "All" || it.sportType.equals(selectedFilter, ignoreCase = true)
+                    selectedFilter == "All" || it.sportType.equals(selectedFilter, ignoreCase = true)
                 },
                 key = { it.id }
             ) { match ->
                 UpcomingEventCard(
                     match = match,
-                    onClick = { }
+                    onClick = { /* No detail screen yet */ }
                 )
             }
         }
@@ -418,11 +420,11 @@ private fun TournamentEventCard(
 private fun Tournament.asRegistrationMatch(): Match = Match(
     id = id,
     tournamentId = id,
-    tournamentName = name,
-    sportType = sport,
-    teamA = name,
+    tournamentName = name.ifBlank { "Tournament" },
+    sportType = sport.ifBlank { "General" },
+    teamA = name.ifBlank { "Tournament" },
     teamB = "Registration",
-    venue = venue,
+    venue = venue.ifBlank { "GNITS" },
     maxSquadSize = maxTeams,
     allowedDepartments = allowedDepartments,
     allowedYears = allowedYears,

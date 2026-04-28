@@ -23,8 +23,6 @@ import com.sportflow.app.ui.screens.admin.AdminDashboardScreen
 import com.sportflow.app.ui.screens.auth.LoginScreen
 import com.sportflow.app.ui.screens.bracket.BracketViewScreen
 import com.sportflow.app.ui.screens.events.EventsScreen
-import com.sportflow.app.ui.screens.home.HomeFeedScreen
-import com.sportflow.app.ui.screens.home.MyMatchesScreen
 import com.sportflow.app.ui.screens.live.LiveMatchCenterScreen
 import com.sportflow.app.ui.screens.profile.ProfileScreen
 import com.sportflow.app.ui.screens.updates.UpdatesScreen
@@ -52,9 +50,8 @@ sealed class Screen(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-role bottom nav definitions
-//   PLAYER : Home | Events | My Matches | Profile
-//   ADMIN  : Home | Events | Admin      | Profile
-// Each role's composable routes are PHYSICALLY ABSENT from the opposite nav host.
+//   PLAYER : Home | Events | Updates | My Matches | Profile
+//   ADMIN  : Home | Events | Admin              | Profile
 // ─────────────────────────────────────────────────────────────────────────────
 private val playerNavItems = listOf(
     Screen.Home,
@@ -176,22 +173,20 @@ fun SportFlowNavHost() {
             }
 
             // ── Updates — PLAYER ONLY ─────────────────────────────────────
-            // Physically absent (composable not registered) for ADMIN sessions.
-            if (!isAdmin) {
-                composable(Screen.Updates.route) {
-                    UpdatesScreen(navController = navController)
-                }
+            // Always registered to prevent navigation crashes.
+            // Access gating is handled by only showing the nav item for players.
+            composable(Screen.Updates.route) {
+                UpdatesScreen(navController = navController)
             }
 
             // ── My Matches — PLAYER ONLY ──────────────────────────────────
-            // Physically absent (composable not registered) for ADMIN sessions.
-            if (!isAdmin) {
-                composable(Screen.MyMatches.route) {
-                    com.sportflow.app.ui.screens.home.MyMatchesScreenComplete(
-                        navController   = navController,
-                        currentUserRole = authState.userRole ?: UserRole.PLAYER
-                    )
-                }
+            // Always registered to prevent navigation crashes.
+            // Access gating is handled by only showing the nav item for players.
+            composable(Screen.MyMatches.route) {
+                com.sportflow.app.ui.screens.home.MyMatchesScreenComplete(
+                    navController   = navController,
+                    currentUserRole = authState.userRole ?: UserRole.PLAYER
+                )
             }
 
             // ── Profile (both roles) ──────────────────────────────────────
@@ -225,16 +220,15 @@ fun SportFlowNavHost() {
             }
 
             // ── Admin Dashboard — ADMIN ONLY ──────────────────────────────
-            // Physically absent (composable not registered) for PLAYER sessions.
-            if (isAdmin) {
-                composable(Screen.Admin.route) {
-                    AdminDashboardScreen(navController = navController)
-                }
-                
-                // Admin Approval Screen
-                composable("admin/approvals") {
-                    com.sportflow.app.ui.screens.admin.AdminApprovalScreen()
-                }
+            // Always registered to prevent navigation crashes.
+            // Access gating is handled by only showing the nav item for admins.
+            composable(Screen.Admin.route) {
+                AdminDashboardScreen(navController = navController)
+            }
+
+            // Admin Approval Screen
+            composable("admin/approvals") {
+                com.sportflow.app.ui.screens.admin.AdminApprovalScreen()
             }
         }
     }

@@ -710,6 +710,31 @@ private fun EventFeedCard(
     onRegister: () -> Unit = {},
     onClick: () -> Unit
 ) {
+    // Compute dynamic status based on match status and time
+    val dynamicStatus = remember(match.status, match.scheduledTime) {
+        when (match.status) {
+            MatchStatus.LIVE, MatchStatus.HALFTIME -> "Live"
+            MatchStatus.COMPLETED -> "Completed"
+            MatchStatus.CANCELLED -> "Cancelled"
+            MatchStatus.SCHEDULED -> {
+                val now = System.currentTimeMillis()
+                val scheduledMillis = match.scheduledTime?.seconds?.times(1000) ?: 0
+                if (scheduledMillis > 0 && now >= scheduledMillis) {
+                    "Starting Soon"
+                } else {
+                    "Upcoming"
+                }
+            }
+        }
+    }
+    
+    val statusColor = when (match.status) {
+        MatchStatus.LIVE, MatchStatus.HALFTIME -> LiveRed
+        MatchStatus.COMPLETED -> SuccessGreen
+        MatchStatus.CANCELLED -> ErrorRed
+        MatchStatus.SCHEDULED -> InfoBlue
+    }
+    
     // Squad slot state derived from the new model fields
     val isSquadFull = match.maxSquadSize > 0 &&
         match.currentSquadCount >= match.maxSquadSize &&
@@ -727,11 +752,15 @@ private fun EventFeedCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 SportTypeChip(sportType = match.sportType)
-                if (match.teamADepartment.isNotBlank()) {
-                    StatusChip(
-                        text = "${match.teamADepartment} vs ${match.teamBDepartment}",
-                        color = GnitsOrange
-                    )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Dynamic status badge
+                    StatusChip(text = dynamicStatus, color = statusColor)
+                    if (match.teamADepartment.isNotBlank()) {
+                        StatusChip(
+                            text = "${match.teamADepartment} vs ${match.teamBDepartment}",
+                            color = GnitsOrange
+                        )
+                    }
                 }
             }
 

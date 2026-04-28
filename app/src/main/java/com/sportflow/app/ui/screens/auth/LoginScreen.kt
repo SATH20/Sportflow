@@ -3,9 +3,13 @@
 package com.sportflow.app.ui.screens.auth
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -172,42 +176,98 @@ fun LoginScreen(
                         )
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Department dropdown
-                        var departmentExpanded by remember { mutableStateOf(false) }
-                        ExposedDropdownMenuBox(
-                            expanded = departmentExpanded,
-                            onExpandedChange = { departmentExpanded = it }
-                        ) {
-                            OutlinedTextField(
-                                value = GnitsDepartment.entries.find { it.name == selectedDepartment }?.displayName ?: "",
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Department") },
-                                leadingIcon = { Icon(Icons.Outlined.School, contentDescription = null) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = departmentExpanded) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .menuAnchor(),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = GnitsOrange,
-                                    focusedLabelColor = GnitsOrange
-                                )
+                        // Department selector
+                        var showDepartmentDialog by remember { mutableStateOf(false) }
+                        
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "Department",
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = SoftWhiteDim,
+                                modifier = Modifier.padding(bottom = 4.dp)
                             )
-                            ExposedDropdownMenu(
-                                expanded = departmentExpanded,
-                                onDismissRequest = { departmentExpanded = false }
+                            Surface(
+                                onClick = { showDepartmentDialog = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(4.dp),
+                                border = BorderStroke(1.dp, if (selectedDepartment.isBlank()) GlassBorder else GnitsOrange),
+                                color = Color.Transparent
                             ) {
-                                GnitsDepartment.entries.forEach { dept ->
-                                    DropdownMenuItem(
-                                        text = { Text(dept.displayName) },
-                                        onClick = {
-                                            selectedDepartment = dept.name
-                                            departmentExpanded = false
-                                        }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.School,
+                                        contentDescription = null,
+                                        tint = SoftWhiteDim,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = GnitsDepartment.entries.find { it.name == selectedDepartment }?.displayName 
+                                            ?: "Select Department",
+                                        style = SportFlowTheme.typography.bodyMedium,
+                                        color = if (selectedDepartment.isBlank()) SoftWhiteDim else SoftWhite,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        Icons.Filled.ArrowDropDown,
+                                        contentDescription = null,
+                                        tint = SoftWhiteDim,
+                                        modifier = Modifier.size(24.dp)
                                     )
                                 }
                             }
                         }
+                        
+                        // Department selection dialog
+                        if (showDepartmentDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showDepartmentDialog = false },
+                                title = { Text("Select Department", color = TextPrimary) },
+                                text = {
+                                    LazyColumn {
+                                        items(GnitsDepartment.entries.size) { index ->
+                                            val dept = GnitsDepartment.entries[index]
+                                            Surface(
+                                                onClick = {
+                                                    selectedDepartment = dept.name
+                                                    showDepartmentDialog = false
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                color = if (selectedDepartment == dept.name) GnitsOrangeLight else Color.Transparent
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(16.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = "${dept.name} - ${dept.displayName}",
+                                                        style = SportFlowTheme.typography.bodyMedium,
+                                                        color = TextPrimary
+                                                    )
+                                                }
+                                            }
+                                            if (index < GnitsDepartment.entries.size - 1) {
+                                                HorizontalDivider(color = CardBorder)
+                                            }
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = { showDepartmentDialog = false }) {
+                                        Text("Cancel", color = TextSecondary)
+                                    }
+                                },
+                                containerColor = PureWhite
+                            )
+                        }
+                        
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
