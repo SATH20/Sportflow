@@ -65,7 +65,6 @@ fun AdvancedRegistrationBottomSheet(
     var badmintonMode by remember { mutableStateOf(RegistrationKind.BADMINTON_SINGLES) }
     var partnerName by remember { mutableStateOf("") }
     var partnerRollNumber by remember { mutableStateOf("") }
-    var partnerRole by remember { mutableStateOf("") }
     
     val sportType = SportType.fromString(match.sportType)
     val isTeamSport = when (sportType) {
@@ -160,9 +159,7 @@ fun AdvancedRegistrationBottomSheet(
                             partnerName = partnerName,
                             onPartnerNameChange = { partnerName = it },
                             partnerRollNumber = partnerRollNumber,
-                            onPartnerRollNumberChange = { partnerRollNumber = it },
-                            partnerRole = partnerRole,
-                            onPartnerRoleChange = { partnerRole = it }
+                            onPartnerRollNumberChange = { partnerRollNumber = it }
                         )
                     }
                     step == 2 && !isPairSport -> {
@@ -242,8 +239,7 @@ fun AdvancedRegistrationBottomSheet(
                                 },
                                 roster = if (isTeamSport) normalizedRoster else emptyList(),
                                 partnerName = partnerName,
-                                partnerRollNumber = partnerRollNumber,
-                                partnerRole = partnerRole
+                                partnerRollNumber = partnerRollNumber
                             )
                             onRegister(data)
                         }
@@ -702,9 +698,7 @@ private fun Step2PairSportSelection(
     partnerName: String,
     onPartnerNameChange: (String) -> Unit,
     partnerRollNumber: String,
-    onPartnerRollNumberChange: (String) -> Unit,
-    partnerRole: String,
-    onPartnerRoleChange: (String) -> Unit
+    onPartnerRollNumberChange: (String) -> Unit
 ) {
     Column {
         Text(
@@ -750,16 +744,6 @@ private fun Step2PairSportSelection(
                 onValueChange = onPartnerRollNumberChange,
                 label = { Text("Partner Roll Number") },
                 leadingIcon = { Icon(Icons.Filled.Badge, contentDescription = null) },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)
-            )
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = partnerRole,
-                onValueChange = onPartnerRoleChange,
-                label = { Text("Partner Role") },
-                leadingIcon = { Icon(Icons.Filled.SportsTennis, contentDescription = null) },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = GnitsOrange)

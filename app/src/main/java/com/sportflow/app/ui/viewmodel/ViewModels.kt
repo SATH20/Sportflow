@@ -1169,6 +1169,42 @@ class AdminViewModel @Inject constructor(
             }
         }
     }
+
+    // ── Create Fixtures Between Users ────────────────────────────────────────
+
+    fun createFixturesBetweenUsers(
+        tournamentId: String,
+        sportType: String,
+        venue: String,
+        startTime: Timestamp,
+        intervalMinutes: Long
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isGeneratingBracket = true, error = null) }
+            try {
+                val createdMatchIds = repository.createFixturesBetweenRegisteredUsers(
+                    tournamentId = tournamentId,
+                    sportType = sportType,
+                    venue = venue,
+                    startTime = startTime,
+                    intervalMinutes = intervalMinutes
+                )
+                _uiState.update {
+                    it.copy(
+                        isGeneratingBracket = false,
+                        successMessage = "✅ Created ${createdMatchIds.size} fixtures between registered users! Both users will see their matches in My Matches."
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isGeneratingBracket = false,
+                        error = e.message ?: "Failed to create fixtures"
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun parseAdminDateTime(raw: String): Timestamp? {
@@ -1205,6 +1241,8 @@ class MyMatchesViewModel @Inject constructor(
     init {
         loadMyMatches()
         loadMyRegistrations()
+        // Auto-link matches to user based on name matching
+        autoLinkMatches()
     }
 
     private fun loadMyMatches() {
@@ -1240,9 +1278,20 @@ class MyMatchesViewModel @Inject constructor(
         }
     }
 
+    private fun autoLinkMatches() {
+        viewModelScope.launch {
+            try {
+                repository.autoLinkMatchesToUsers()
+            } catch (_: Exception) {
+                // Non-critical - just for fixing existing data
+            }
+        }
+    }
+
     fun refresh() {
         _uiState.update { it.copy(isLoading = true, error = null) }
         loadMyMatches()
+        autoLinkMatches()
     }
 
     fun clearError() {

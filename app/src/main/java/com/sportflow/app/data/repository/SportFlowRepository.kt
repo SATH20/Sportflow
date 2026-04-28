@@ -1,5 +1,6 @@
 package com.sportflow.app.data.repository
 
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.firestore.FieldPath
@@ -118,7 +119,127 @@ class SportFlowRepository @Inject constructor(
         awaitClose { listener.remove() }
     }
 
-    // ── Match CRUD (Admin) ──────────────────────────────────────────────────
+    // ── Admin Fixture Creation ──────────────────────────────────────────────
+
+    /** Get all registrations for a specific tournament to create fixtures */
+    suspend fun getRegistrationsForTournament(tournamentId: String): List<Registration> {
+        return firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("tournamentId", tournamentId)
+            .whereEqualTo("status", RegistrationStatus.CONFIRMED.name)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { it.toObject(Registration::class.java)?.copy(id = it.id) }
+    }
+
+    /** 
+     * Link an existing match to a user by adding their UID to the participants list.
+     * This is useful for retroactively fixing matches that were created without participant tracking.
+     */
+    suspend fun linkMatchToUser(matchId: String, userId: String, team: String) {
+        val field = if (team == "A") "teamAParticipants" else "teamBParticipants"
+        firestore.collection(MATCHES_COLLECTION)
+            .document(matchId)
+            .update(field, FieldValue.arrayUnion(userId))
+            .await()
+    }
+
+    /**
+     * Automatically link matches to users based on name matching.
+     * This helps fix existing matches that don't have participant tracking.
+     */
+    suspend fun autoLinkMatchesToUsers() {
+        val currentUser = auth.currentUser ?: return
+        val uid = currentUser.uid
+        
+        // Get user's display name
+        val userDoc = firestore.collection(USERS_COLLECTION).document(uid).get().await()
+        val userName = userDoc.getString("displayName") ?: return
+        
+        if (userName.isBlank()) return
+        
+        // Find all matches where user's name appears
+        val allMatches = firestore.collection(MATCHES_COLLECTION).get().await()
+        
+        allMatches.documents.forEach { doc ->
+            val match = doc.toObject(Match::class.java)?.copy(id = doc.id) ?: return@forEach
+            
+            // Check if user's name is in teamA or teamB
+            val isInTeamA = match.teamA.contains(userName, ignoreCase = true)
+            val isInTeamB = match.teamB.contains(userName, ignoreCase = true)
+            
+            // Check if already linked
+            val alreadyLinkedA = match.teamAParticipants.contains(uid)
+            val alreadyLinkedB = match.teamBParticipants.contains(uid)
+            
+            // Link if needed
+            if (isInTeamA && !alreadyLinkedA) {
+                linkMatchToUser(match.id, uid, "A")
+            }
+            if (isInTeamB && !alreadyLinkedB) {
+                linkMatchToUser(match.id, uid, "B")
+            }
+        }
+    }
+
+    /** Create fixtures between registered users for a tournament */
+    suspend fun createFixturesBetweenRegisteredUsers(
+        tournamentId: String,
+        sportType: String,
+        venue: String,
+        startTime: Timestamp,
+        intervalMinutes: Long = 60L
+    ): List<String> {
+        val registrations = getRegistrationsForTournament(tournamentId)
+        val tournament = firestore.collection(TOURNAMENTS_COLLECTION)
+            .document(tournamentId)
+            .get()
+            .await()
+            .toObject(Tournament::class.java)
+
+        if (registrations.size < 2) {
+            throw IllegalStateException("Need at least 2 confirmed registrations to create fixtures")
+        }
+
+        val createdMatchIds = mutableListOf<String>()
+        var timeOffset = 0L
+
+        // Create matches between pairs of registered users
+        for (i in registrations.indices step 2) {
+            val userA = registrations[i]
+            val userB = registrations.getOrNull(i + 1)
+
+            if (userB != null) {
+                val matchTime = Timestamp(startTime.seconds + timeOffset * 60, 0)
+                val matchId = createMatchBetweenUsers(
+                    userAId = userA.uid,
+                    userBId = userB.uid,
+                    userAName = userA.userName,
+                    userBName = userB.userName,
+                    sportType = sportType,
+                    venue = venue,
+                    scheduledTime = matchTime,
+                    tournamentId = tournamentId,
+                    tournamentName = tournament?.name ?: "",
+                    round = "Round 1"
+                )
+                createdMatchIds.add(matchId)
+                timeOffset += intervalMinutes
+
+                // Update registrations to link them to the created match
+                firestore.collection(GNITS_REGISTRATIONS)
+                    .document(userA.id)
+                    .update("matchId", matchId)
+                    .await()
+                firestore.collection(GNITS_REGISTRATIONS)
+                    .document(userB.id)
+                    .update("matchId", matchId)
+                    .await()
+            }
+        }
+
+        return createdMatchIds
+    }
 
     /** Create a new match document in the gnits_matches collection */
     suspend fun createMatch(match: Match): String {
@@ -128,6 +249,8 @@ class SportFlowRepository @Inject constructor(
             "teamB" to match.teamB,
             "teamADepartment" to match.teamADepartment,
             "teamBDepartment" to match.teamBDepartment,
+            "teamAParticipants" to match.teamAParticipants,
+            "teamBParticipants" to match.teamBParticipants,
             "scoreA" to 0,
             "scoreB" to 0,
             "status" to MatchStatus.SCHEDULED.name,
@@ -140,10 +263,48 @@ class SportFlowRepository @Inject constructor(
             "round" to match.round,
             "highlights" to emptyList<String>(),
             "winnerId" to "",
-            "createdBy" to (auth.currentUser?.uid ?: "")
+            "createdBy" to (auth.currentUser?.uid ?: ""),
+            "eligibilityText" to match.eligibilityText,
+            "maxRegistrations" to match.maxRegistrations,
+            "registrationCount" to match.registrationCount,
+            "nextMatchId" to match.nextMatchId,
+            "maxSquadSize" to match.maxSquadSize,
+            "currentSquadCount" to match.currentSquadCount,
+            "allowedDepartments" to match.allowedDepartments,
+            "allowedYears" to match.allowedYears
         )
         val docRef = firestore.collection(MATCHES_COLLECTION).add(data).await()
         return docRef.id
+    }
+
+    /** Create a match between two registered users - ensures both users see it in My Matches */
+    suspend fun createMatchBetweenUsers(
+        userAId: String,
+        userBId: String,
+        userAName: String,
+        userBName: String,
+        sportType: String,
+        venue: String,
+        scheduledTime: Timestamp,
+        tournamentId: String = "",
+        tournamentName: String = "",
+        round: String = ""
+    ): String {
+        val match = Match(
+            sportType = sportType,
+            teamA = userAName,
+            teamB = userBName,
+            teamAParticipants = listOf(userAId),
+            teamBParticipants = listOf(userBId),
+            venue = venue,
+            scheduledTime = scheduledTime,
+            tournamentId = tournamentId,
+            tournamentName = tournamentName,
+            round = round,
+            status = MatchStatus.SCHEDULED,
+            eligibilityText = "Registered participants only"
+        )
+        return createMatch(match)
     }
 
     /** Delete a match document from the gnits_matches collection */
@@ -1482,6 +1643,10 @@ class SportFlowRepository @Inject constructor(
      * Result: admin manual edits (venue/team/time) reflect instantly on My Matches
      * without requiring any registration mutation.
      */
+    /**
+     * Real-time stream of all matches the current user is involved in.
+     * SIMPLIFIED VERSION - fetches ALL matches and filters by name.
+     */
     fun observeMyRegisteredMatchesRealtime(): Flow<List<com.sportflow.app.data.model.Match>> = callbackFlow {
         val uid = auth.currentUser?.uid
         if (uid == null) {
@@ -1490,52 +1655,74 @@ class SportFlowRepository @Inject constructor(
             return@callbackFlow
         }
 
-        var registeredMatchIds: Set<String> = emptySet()
-        var allMatches: Map<String, com.sportflow.app.data.model.Match> = emptyMap()
-
-        fun emitFiltered() {
-            val filtered = if (registeredMatchIds.isEmpty()) {
-                emptyList()
-            } else {
-                registeredMatchIds.mapNotNull { matchId -> allMatches[matchId] }
-                    .sortedByDescending { it.scheduledTime }
+        // Get user name synchronously first
+        firestore.collection(USERS_COLLECTION).document(uid).get()
+            .addOnSuccessListener { doc ->
+                val userName = doc.getString("displayName") ?: ""
+                
+                // Now listen to ALL matches
+                firestore.collection(MATCHES_COLLECTION)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            trySend(emptyList())
+                            return@addSnapshotListener
+                        }
+                        
+                        val userMatches = mutableListOf<com.sportflow.app.data.model.Match>()
+                        
+                        snapshot?.documents?.forEach { doc ->
+                            val match = doc.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = doc.id)
+                            if (match != null) {
+                                // Check ALL possible ways user could be in this match
+                                val inParticipants = match.teamAParticipants.contains(uid) || 
+                                                    match.teamBParticipants.contains(uid)
+                                
+                                // More flexible name matching - check if ANY part of the name matches
+                                val inTeamA = if (userName.isNotBlank()) {
+                                    val nameParts = userName.lowercase().split(" ")
+                                    val teamAParts = match.teamA.lowercase().split(" ", ",", "-", "_")
+                                    nameParts.any { part -> teamAParts.any { it.contains(part) || part.contains(it) } }
+                                } else false
+                                
+                                val inTeamB = if (userName.isNotBlank()) {
+                                    val nameParts = userName.lowercase().split(" ")
+                                    val teamBParts = match.teamB.lowercase().split(" ", ",", "-", "_")
+                                    nameParts.any { part -> teamBParts.any { it.contains(part) || part.contains(it) } }
+                                } else false
+                                
+                                if (inParticipants || inTeamA || inTeamB) {
+                                    userMatches.add(match)
+                                }
+                            }
+                        }
+                        
+                        // Sort and emit - ALWAYS emit even if empty
+                        val sorted = userMatches.sortedByDescending { it.scheduledTime }
+                        trySend(sorted)
+                    }
             }
-            trySend(filtered)
-        }
-
-        // Listen to user's registrations in top-level collection
-        val registrationListener = firestore.collection(GNITS_REGISTRATIONS)
-            .whereEqualTo("uid", uid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                registeredMatchIds = snapshot?.documents
-                    ?.mapNotNull { it.getString("matchId") }
-                    ?.filter { it.isNotBlank() }
-                    ?.toSet()
-                    ?: emptySet()
-                emitFiltered()
+            .addOnFailureListener {
+                // If we can't get user name, still try to match by UID only
+                firestore.collection(MATCHES_COLLECTION)
+                    .addSnapshotListener { snapshot, error ->
+                        if (error != null) {
+                            trySend(emptyList())
+                            return@addSnapshotListener
+                        }
+                        
+                        val userMatches = snapshot?.documents?.mapNotNull { doc ->
+                            val match = doc.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = doc.id)
+                            if (match != null && (match.teamAParticipants.contains(uid) || match.teamBParticipants.contains(uid))) {
+                                match
+                            } else null
+                        } ?: emptyList()
+                        
+                        val sorted = userMatches.sortedByDescending { it.scheduledTime }
+                        trySend(sorted)
+                    }
             }
 
-        // Listen to all matches for real-time updates
-        val matchesListener = firestore.collection(MATCHES_COLLECTION)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    trySend(emptyList())
-                    return@addSnapshotListener
-                }
-                allMatches = snapshot?.documents?.mapNotNull {
-                    it.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = it.id)
-                }?.associateBy { it.id } ?: emptyMap()
-                emitFiltered()
-            }
-
-        awaitClose {
-            registrationListener.remove()
-            matchesListener.remove()
-        }
+        awaitClose { }
     }
 
     /**

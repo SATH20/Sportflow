@@ -85,6 +85,12 @@ data class Match(
     val teamBDepartment: String = "",
     val teamALogo: String = "",
     val teamBLogo: String = "",
+    
+    // ── Participant Tracking for My Matches ──────────────────────────
+    /** UIDs of users in Team A (for individual matches, single UID) */
+    val teamAParticipants: List<String> = emptyList(),
+    /** UIDs of users in Team B (for individual matches, single UID) */
+    val teamBParticipants: List<String> = emptyList(),
 
     // ── Universal score (used for football, kabaddi, athletics) ──────
     val scoreA: Int = 0,

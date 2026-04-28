@@ -143,7 +143,6 @@ fun EventsScreen(
                     isRegistered = tournament.id in registrationState.registeredTournamentIds,
                     isAdmin = isAdmin,
                     onRegister = { selectedTournament = tournament },
-                    onQuickRegister = { registrationViewModel.quickRegisterForTournament(tournament) },
                     onClick = {
                         if (tournament.id.isNotBlank()) {
                             navController.navigate("bracket?tournamentId=${tournament.id}")
@@ -219,14 +218,8 @@ private fun TournamentEventCard(
     isRegistered: Boolean,
     isAdmin: Boolean,
     onRegister: () -> Unit,
-    onQuickRegister: () -> Unit,
     onClick: () -> Unit
 ) {
-    val allowQuickRegister = remember(tournament.sport) {
-        val sportType = SportType.fromString(tournament.sport)
-        sportType == SportType.BADMINTON || sportType == SportType.TABLE_TENNIS
-    }
-
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -347,70 +340,25 @@ private fun TournamentEventCard(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Registration buttons
-                if (!isAdmin && !isRegistered && tournament.status == TournamentStatus.REGISTRATION) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (allowQuickRegister) {
-                            OutlinedButton(
-                                onClick = onQuickRegister,
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(24.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = Color.White
-                                ),
-                                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f))
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.FlashOn,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Quick")
-                            }
-                        }
-
-                        Button(
-                            onClick = onRegister,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(24.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = Color.White,
-                                contentColor = GnitsOrangeDark
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.GroupAdd,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Register")
-                        }
-                    }
-                } else {
-                    Button(
-                        onClick = onRegister,
-                        enabled = !isAdmin && !isRegistered && tournament.status == TournamentStatus.REGISTRATION,
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = GnitsOrangeDark,
-                            disabledContainerColor = Color.White.copy(alpha = 0.35f),
-                            disabledContentColor = Color.White
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (isRegistered) Icons.Filled.CheckCircle else Icons.Filled.GroupAdd,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (isAdmin) "Admin View" else if (isRegistered) "Registered" else "Register")
-                    }
+                // Registration button
+                Button(
+                    onClick = onRegister,
+                    enabled = !isAdmin && !isRegistered && tournament.status == TournamentStatus.REGISTRATION,
+                    shape = RoundedCornerShape(24.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White,
+                        contentColor = GnitsOrangeDark,
+                        disabledContainerColor = Color.White.copy(alpha = 0.35f),
+                        disabledContentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (isRegistered) Icons.Filled.CheckCircle else Icons.Filled.GroupAdd,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (isAdmin) "Admin View" else if (isRegistered) "Registered" else "Register")
                 }
             }
         }

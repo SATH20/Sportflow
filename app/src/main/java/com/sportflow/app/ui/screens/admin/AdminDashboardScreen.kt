@@ -60,7 +60,7 @@ fun AdminDashboardScreen(
     var denyReason by rememberSaveable { mutableStateOf("") }
     val tabs = listOf(
         "Create Tournament", "Live Scoring", "Create Match",
-        "Manual Editor", "Tournaments", "Registration Approvals"
+        "Create Fixtures", "Manual Editor", "Tournaments", "Registration Approvals"
     )
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -253,6 +253,12 @@ fun AdminDashboardScreen(
                 }
 
                 3 -> {
+                    // ── CREATE FIXTURES TAB ──────────────────────────────────
+                    item { SectionHeader(title = "Create Fixtures Between Registered Users") }
+                    item { CreateFixturesCard(uiState, viewModel) }
+                }
+
+                4 -> {
                     // ── MANUAL FIXTURE EDITOR TAB ────────────────────────────
                     item { SectionHeader(title = "✏️ Manual Fixture Editor") }
                     val scheduledMatches =
@@ -266,7 +272,7 @@ fun AdminDashboardScreen(
                     }
                 }
 
-                4 -> {
+                5 -> {
                     // ── TOURNAMENTS TAB ──────────────────────────────────────
                     item { SectionHeader(title = "Tournament Management") }
                     if (uiState.tournaments.isEmpty()) {
@@ -283,7 +289,7 @@ fun AdminDashboardScreen(
                     }
                 }
 
-                5 -> {
+                6 -> {
                     // ── REGISTRATIONS TAB (Admin Data Bridge) ───────────────────
                     // selectedReg and regFilter are hoisted to the parent Composable scope
 
@@ -3012,3 +3018,275 @@ fun AdminDashboardScreen(
             }
         }
     }
+
+// ── CREATE FIXTURES CARD ─────────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CreateFixturesCard(
+    uiState: AdminUiState,
+    viewModel: AdminViewModel
+) {
+    var selectedTournamentId by remember { mutableStateOf("") }
+    var selectedSportType by remember { mutableStateOf("") }
+    var selectedVenue by remember { mutableStateOf(GnitsVenue.MAIN_GROUND.displayName) }
+    var startTimeText by remember { mutableStateOf("") }
+    var intervalMinutes by remember { mutableStateOf("60") }
+    var isCreating by remember { mutableStateOf(false) }
+    
+    var tournamentExpanded by remember { mutableStateOf(false) }
+    var sportExpanded by remember { mutableStateOf(false) }
+    var venueExpanded by remember { mutableStateOf(false) }
+
+    val availableTournaments = uiState.tournaments.filter { 
+        it.status == TournamentStatus.REGISTRATION 
+    }
+    val sportTypes = SportType.displayList
+    val venues = GnitsVenue.allNames
+
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            // Header
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = GnitsOrange.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        "⚡ Quick",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = SportFlowTheme.typography.labelMedium,
+                        color = GnitsOrange, 
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "Create Fixtures Between Registered Users",
+                    style = SportFlowTheme.typography.bodyMedium,
+                    color = TextSecondary
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Tournament Selection
+            ExposedDropdownMenuBox(
+                expanded = tournamentExpanded,
+                onExpandedChange = { tournamentExpanded = !tournamentExpanded }
+            ) {
+                OutlinedTextField(
+                    value = availableTournaments.find { it.id == selectedTournamentId }?.name ?: "Select Tournament",
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Tournament *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = tournamentExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = tournamentExpanded,
+                    onDismissRequest = { tournamentExpanded = false }
+                ) {
+                    availableTournaments.forEach { tournament ->
+                        DropdownMenuItem(
+                            text = { 
+                                Column {
+                                    Text(tournament.name)
+                                    Text(
+                                        "${tournament.sport} • ${tournament.teams.size} registered",
+                                        style = SportFlowTheme.typography.bodySmall,
+                                        color = TextSecondary
+                                    )
+                                }
+                            },
+                            onClick = {
+                                selectedTournamentId = tournament.id
+                                selectedSportType = tournament.sport
+                                selectedVenue = tournament.venue
+                                tournamentExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Sport Type
+            ExposedDropdownMenuBox(
+                expanded = sportExpanded,
+                onExpandedChange = { sportExpanded = !sportExpanded }
+            ) {
+                OutlinedTextField(
+                    value = selectedSportType.ifEmpty { "Select Sport" },
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Sport Type *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sportExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = sportExpanded,
+                    onDismissRequest = { sportExpanded = false }
+                ) {
+                    sportTypes.forEach { sport ->
+                        DropdownMenuItem(
+                            text = { Text(sport) },
+                            onClick = {
+                                selectedSportType = sport
+                                sportExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Venue
+            ExposedDropdownMenuBox(
+                expanded = venueExpanded,
+                onExpandedChange = { venueExpanded = !venueExpanded }
+            ) {
+                OutlinedTextField(
+                    value = selectedVenue,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Venue *") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = venueExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor(),
+                    shape = RoundedCornerShape(14.dp)
+                )
+                ExposedDropdownMenu(
+                    expanded = venueExpanded,
+                    onDismissRequest = { venueExpanded = false }
+                ) {
+                    venues.forEach { venue ->
+                        DropdownMenuItem(
+                            text = { Text(venue) },
+                            onClick = {
+                                selectedVenue = venue
+                                venueExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Start Time
+            OutlinedTextField(
+                value = startTimeText,
+                onValueChange = { startTimeText = it },
+                label = { Text("Start Time (dd/MM/yyyy HH:mm) *") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true,
+                placeholder = { Text("25/04/2026 14:00") }
+            )
+            
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Interval
+            OutlinedTextField(
+                value = intervalMinutes,
+                onValueChange = { intervalMinutes = it },
+                label = { Text("Interval Between Matches (minutes)") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                singleLine = true
+            )
+            
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Info about selected tournament
+            if (selectedTournamentId.isNotEmpty()) {
+                val tournament = availableTournaments.find { it.id == selectedTournamentId }
+                if (tournament != null) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = InfoBlue.copy(alpha = 0.1f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, InfoBlue.copy(alpha = 0.2f))
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                "Tournament Info",
+                                style = SportFlowTheme.typography.labelMedium,
+                                color = InfoBlue,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                "• ${tournament.teams.size} teams registered",
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                            Text(
+                                "• Will create ${tournament.teams.size / 2} matches",
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                            Text(
+                                "• Each registered user will get a match",
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+            }
+
+            // Create Button
+            PillButton(
+                text = if (isCreating) "Creating Fixtures..." else "Create Fixtures",
+                onClick = {
+                    if (selectedTournamentId.isNotEmpty() && 
+                        selectedSportType.isNotEmpty() && 
+                        startTimeText.isNotEmpty()) {
+                        
+                        val startTime = parseAdminScreenDateTime(startTimeText)
+                        if (startTime != null) {
+                            isCreating = true
+                            viewModel.createFixturesBetweenUsers(
+                                tournamentId = selectedTournamentId,
+                                sportType = selectedSportType,
+                                venue = selectedVenue,
+                                startTime = startTime,
+                                intervalMinutes = intervalMinutes.toLongOrNull() ?: 60L
+                            )
+                            // Reset form
+                            selectedTournamentId = ""
+                            selectedSportType = ""
+                            startTimeText = ""
+                            isCreating = false
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !isCreating && selectedTournamentId.isNotEmpty() && 
+                         selectedSportType.isNotEmpty() && startTimeText.isNotEmpty(),
+                icon = Icons.Filled.SportsSoccer,
+                containerColor = GnitsOrange
+            )
+            
+            if (availableTournaments.isEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "No tournaments with registrations found. Create a tournament first and wait for registrations.",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = TextTertiary,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}

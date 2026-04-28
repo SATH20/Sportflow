@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,20 @@ fun MyMatchesScreen(
     val uiState  by viewModel.uiState.collectAsStateWithLifecycle()
     val regState by regViewModel.uiState.collectAsStateWithLifecycle()
     val scorecardState by scorecardViewModel.uiState.collectAsStateWithLifecycle()
+
+    // Tab state
+    var selectedTab by remember { mutableStateOf(0) }
+    val tabs = listOf("Upcoming", "Live", "Completed")
+
+    // Filter matches by selected tab
+    val filteredMatches = remember(uiState.myMatches, selectedTab) {
+        when (selectedTab) {
+            0 -> uiState.myMatches.filter { it.status == MatchStatus.SCHEDULED }
+            1 -> uiState.myMatches.filter { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
+            2 -> uiState.myMatches.filter { it.status == MatchStatus.COMPLETED }
+            else -> uiState.myMatches
+        }
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(regState.successMessage, regState.error) {
@@ -99,6 +114,64 @@ fun MyMatchesScreen(
                 }
             }
 
+            // ── Tabs ──────────────────────────────────────────────────────
+            if (!uiState.isLoading && uiState.myMatches.isNotEmpty()) {
+                item {
+                    TabRow(
+                        selectedTabIndex = selectedTab,
+                        containerColor = PureWhite,
+                        contentColor = GnitsOrange,
+                        indicator = { tabPositions ->
+                            TabRowDefaults.SecondaryIndicator(
+                                Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                                color = GnitsOrange
+                            )
+                        }
+                    ) {
+                        tabs.forEachIndexed { index, title ->
+                            val count = when (index) {
+                                0 -> uiState.myMatches.count { it.status == MatchStatus.SCHEDULED }
+                                1 -> uiState.myMatches.count { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
+                                2 -> uiState.myMatches.count { it.status == MatchStatus.COMPLETED }
+                                else -> 0
+                            }
+                            Tab(
+                                selected = selectedTab == index,
+                                onClick = { selectedTab = index },
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text(
+                                            text = title,
+                                            style = SportFlowTheme.typography.labelLarge,
+                                            fontWeight = if (selectedTab == index) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (count > 0) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = if (selectedTab == index) GnitsOrange else TextTertiary.copy(alpha = 0.3f)
+                                            ) {
+                                                Text(
+                                                    text = "$count",
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                                    style = SportFlowTheme.typography.labelSmall,
+                                                    color = if (selectedTab == index) Color.White else TextSecondary,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                },
+                                selectedContentColor = GnitsOrange,
+                                unselectedContentColor = TextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── Loading ───────────────────────────────────────────────────
             if (uiState.isLoading) {
                 item {
@@ -135,36 +208,61 @@ fun MyMatchesScreen(
                     SectionHeader(title = "Registered Events")
                 }
 
-                items(
-                    items = uiState.myMatches,
-                    key = { it.id }
-                ) { match ->
-                    val isLoadingReg = match.id in regState.loadingMatchIds
-                    val isShowingScorecard = scorecardState.selectedMatchId == match.id
-                    MyMatchCard(
-                        match           = match,
-                        isUnregistering = isLoadingReg,
-                        scorecard       = if (isShowingScorecard) scorecardState.scorecard else null,
-                        isScorecardLoading = isShowingScorecard && scorecardState.isLoading,
-                        onCancelReg = {
-                            if (match.status == MatchStatus.SCHEDULED) {
-                                // Pass role so ViewModel RBAC guard can verify
-                                regViewModel.cancelRegistration(match.id, currentUserRole)
-                            }
-                        },
-                        onViewLive = {
-                            if (match.status == MatchStatus.LIVE) {
-                                navController.navigate("live")
-                            }
-                        },
-                        onViewPerformance = {
-                            if (isShowingScorecard) {
-                                scorecardViewModel.clearScorecard()
-                            } else {
-                                scorecardViewModel.loadScorecard(match.id)
+                // Show filtered matches based on selected tab
+                if (filteredMatches.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(48.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Outlined.SportsScore,
+                                    contentDescription = null,
+                                    tint = TextTertiary,
+                                    modifier = Modifier.size(48.dp)
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(
+                                    text = "No ${tabs[selectedTab].lowercase()} matches",
+                                    style = SportFlowTheme.typography.bodyMedium,
+                                    color = TextSecondary
+                                )
                             }
                         }
-                    )
+                    }
+                } else {
+                    items(
+                        items = filteredMatches,
+                        key = { it.id }
+                    ) { match ->
+                        val isLoadingReg = match.id in regState.loadingMatchIds
+                        val isShowingScorecard = scorecardState.selectedMatchId == match.id
+                        MyMatchCard(
+                            match           = match,
+                            isUnregistering = isLoadingReg,
+                            scorecard       = if (isShowingScorecard) scorecardState.scorecard else null,
+                            isScorecardLoading = isShowingScorecard && scorecardState.isLoading,
+                            onCancelReg = {
+                                if (match.status == MatchStatus.SCHEDULED) {
+                                    // Pass role so ViewModel RBAC guard can verify
+                                    regViewModel.cancelRegistration(match.id, currentUserRole)
+                                }
+                            },
+                            onViewLive = {
+                                if (match.status == MatchStatus.LIVE) {
+                                    navController.navigate("live")
+                                }
+                            },
+                            onViewPerformance = {
+                                if (isShowingScorecard) {
+                                    scorecardViewModel.clearScorecard()
+                                } else {
+                                    scorecardViewModel.loadScorecard(match.id)
+                                }
+                            }
+                        )
+                    }
                 }
             }
 
