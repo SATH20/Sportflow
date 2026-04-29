@@ -142,6 +142,12 @@ data class Match(
     val winnerId: String = "",
     val createdBy: String = "",
 
+    // ── Notification Tracking (Anti-Spam) ────────────────────────────────────
+    /** Prevents duplicate "Match Started" notifications */
+    val startNotifSent: Boolean = false,
+    /** Prevents duplicate "1-Hour Reminder" notifications */
+    val reminderNotifSent: Boolean = false,
+
     // ── Registration & Feed Metadata ──────────────────────────────────
     /** Human-readable eligibility rule, e.g. "IT students only" or "All departments" */
     val eligibilityText: String = "All GNITS students",
@@ -760,5 +766,24 @@ data class Announcement(
     val matchId: String = "",
     val tournamentId: String = "",
     val createdAt: Timestamp? = null,
+    val createdBy: String = ""
+)
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MANUAL BROADCAST UPDATE — Admin-to-Player Updates Feed
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Manual broadcast update sent by Admin to Players' Updates tab.
+ * Supports global broadcasts (all users) or sport-specific filtering.
+ * 
+ * Stored in: gnits_updates collection
+ */
+data class Update(
+    val id: String = "",
+    val title: String = "",
+    val body: String = "",
+    val targetSport: String = "",  // Empty = All Users, otherwise specific sport (e.g., "Cricket")
+    val createdAt: com.google.firebase.Timestamp? = null,
     val createdBy: String = ""
 )

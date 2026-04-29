@@ -63,6 +63,13 @@ fun AdminDashboardScreen(
         "Create Fixtures", "Manual Editor", "Tournaments", "Registration Approvals"
     )
 
+    // Broadcast dialog state
+    var showBroadcastDialog by remember { mutableStateOf(false) }
+    var broadcastTitle by remember { mutableStateOf("") }
+    var broadcastBody by remember { mutableStateOf("") }
+    var broadcastTarget by remember { mutableStateOf("All Users") }
+    val targetOptions = listOf("All Users") + SportType.entries.map { it.display }
+
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier
@@ -403,6 +410,49 @@ fun AdminDashboardScreen(
 
                 }
             }
+        }
+        
+        // Floating Action Button for Manual Broadcast
+        FloatingActionButton(
+            onClick = { showBroadcastDialog = true },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(24.dp),
+            containerColor = GnitsOrange,
+            contentColor = Color.White
+        ) {
+            Icon(
+                Icons.Filled.Campaign,
+                contentDescription = "Broadcast Message",
+                modifier = Modifier.size(28.dp)
+            )
+        }
+        
+        // Broadcast Dialog
+        if (showBroadcastDialog) {
+            BroadcastDialog(
+                title = broadcastTitle,
+                body = broadcastBody,
+                target = broadcastTarget,
+                targetOptions = targetOptions,
+                onTitleChange = { broadcastTitle = it },
+                onBodyChange = { broadcastBody = it },
+                onTargetChange = { broadcastTarget = it },
+                onDismiss = {
+                    showBroadcastDialog = false
+                    broadcastTitle = ""
+                    broadcastBody = ""
+                    broadcastTarget = "All Users"
+                },
+                onSend = {
+                    val targetSport = if (broadcastTarget == "All Users") "" else broadcastTarget
+                    viewModel.sendBroadcastUpdate(broadcastTitle, broadcastBody, targetSport)
+                    showBroadcastDialog = false
+                    broadcastTitle = ""
+                    broadcastBody = ""
+                    broadcastTarget = "All Users"
+                }
+            )
         }
     }
 
@@ -1393,6 +1443,24 @@ fun AdminDashboardScreen(
                                 style = SportFlowTheme.typography.bodyMedium,
                                 color = TextTertiary
                             )
+                            
+                            // EMERGENCY FIX BUTTON for completed matches with wrong scores
+                            if (match.status == MatchStatus.COMPLETED) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                PillButton(
+                                    text = "🔧 Fix Scores",
+                                    onClick = { viewModel.fixCompletedMatchScores() },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    icon = Icons.Filled.Build,
+                                    containerColor = WarningAmber
+                                )
+                                Text(
+                                    "Use this if completed match shows 0-0",
+                                    style = SportFlowTheme.typography.bodySmall,
+                                    color = TextTertiary,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -3362,6 +3430,174 @@ private fun CreateFixturesCard(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        }  // Close Column inside SportCard
+    }  // Close SportCard
+}
+
+// ── Broadcast Dialog Component ────────────────────────────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BroadcastDialog(
+    title: String,
+    body: String,
+    target: String,
+    targetOptions: List<String>,
+    onTitleChange: (String) -> Unit,
+    onBodyChange: (String) -> Unit,
+    onTargetChange: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onSend: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Filled.Campaign,
+                    contentDescription = null,
+                    tint = GnitsOrange,
+                    modifier = Modifier.size(24.dp)
+                )
+                Text(
+                    "Broadcast Message",
+                    style = SportFlowTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Title TextField
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = onTitleChange,
+                    label = { Text("Message Title") },
+                    placeholder = { Text("e.g., Important Update") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = GnitsOrange,
+                        focusedLabelColor = GnitsOrange
+                    )
+                )
+                
+                // Body TextField
+                OutlinedTextField(
+                    value = body,
+                    onValueChange = onBodyChange,
+                    label = { Text("Message Body") },
+                    placeholder = { Text("Enter your message here...") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
+                    maxLines = 5,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = GnitsOrange,
+                        focusedLabelColor = GnitsOrange
+                    )
+                )
+                
+                // Target Dropdown
+                ExposedDropdownMenuBox(
+                    expanded = expanded,
+                    onExpandedChange = { expanded = !expanded }
+                ) {
+                    OutlinedTextField(
+                        value = target,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Target Audience") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GnitsOrange,
+                            focusedLabelColor = GnitsOrange
+                        )
+                    )
+                    
+                    ExposedDropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false }
+                    ) {
+                        targetOptions.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            if (option == "All Users") Icons.Filled.Public else Icons.Filled.SportsSoccer,
+                                            contentDescription = null,
+                                            tint = if (option == target) GnitsOrange else TextSecondary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            option,
+                                            color = if (option == target) GnitsOrange else TextPrimary
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onTargetChange(option)
+                                    expanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                
+                // Info text
+                Text(
+                    text = if (target == "All Users") {
+                        "📢 This message will be sent to ALL users"
+                    } else {
+                        "🎯 This message will be sent only to $target players"
+                    },
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = if (target == "All Users") WarningAmber else InfoBlue,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            if (target == "All Users") WarningAmber.copy(alpha = 0.1f) else InfoBlue.copy(alpha = 0.1f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .padding(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onSend,
+                enabled = title.isNotBlank() && body.isNotBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = GnitsOrange)
+            ) {
+                Icon(
+                    Icons.Filled.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Send Broadcast")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSecondary)
+            }
         }
-    }
+    )
 }

@@ -90,7 +90,7 @@ fun UpdatesScreen(
                     CircularProgressIndicator(color = GnitsOrange)
                 }
             }
-        } else if (uiState.announcements.isEmpty()) {
+        } else if (uiState.announcements.isEmpty() && uiState.broadcastUpdates.isEmpty()) {
             item {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(48.dp),
@@ -102,7 +102,16 @@ fun UpdatesScreen(
                 }
             }
         } else {
-            items(uiState.announcements, key = { it.id }) { announcement ->
+            // Show broadcast updates first (most recent)
+            items(uiState.broadcastUpdates, key = { "update_${it.id}" }) { update ->
+                BroadcastUpdateCard(
+                    update = update,
+                    isNew = update.createdAt.isAfter(sessionLastOpenedAt)
+                )
+            }
+            
+            // Then show announcements
+            items(uiState.announcements, key = { "announcement_${it.id}" }) { announcement ->
                 TimelineAnnouncementCard(
                     announcement = announcement,
                     isNew = announcement.createdAt.isAfter(sessionLastOpenedAt),
@@ -113,6 +122,87 @@ fun UpdatesScreen(
                         }
                     }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BroadcastUpdateCard(
+    update: com.sportflow.app.data.model.Update,
+    isNew: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(GnitsOrange),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Campaign, contentDescription = null, tint = Color.White, modifier = Modifier.size(19.dp))
+            }
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(72.dp)
+                    .background(GnitsOrange.copy(alpha = 0.32f))
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        SportCard(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = update.title,
+                        style = SportFlowTheme.typography.headlineSmall,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (isNew) {
+                        Surface(shape = RoundedCornerShape(12.dp), color = LiveRed) {
+                            Text(
+                                text = "New",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = update.body,
+                    style = SportFlowTheme.typography.bodyMedium,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (update.targetSport.isBlank()) InfoBlue.copy(alpha = 0.15f) else GnitsOrange.copy(alpha = 0.15f)
+                    ) {
+                        Text(
+                            text = if (update.targetSport.isBlank()) "📢 All Users" else "🎯 ${update.targetSport}",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = SportFlowTheme.typography.labelSmall,
+                            color = if (update.targetSport.isBlank()) InfoBlue else GnitsOrange,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }

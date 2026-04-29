@@ -965,6 +965,19 @@ class AdminViewModel @Inject constructor(
         }
     }
 
+    /** EMERGENCY FIX: Recalculate setsWonA/B from completedSets for a completed match */
+    fun fixCompletedMatchScores() {
+        val matchId = _uiState.value.selectedMatch?.id ?: return
+        viewModelScope.launch {
+            try {
+                repository.fixCompletedMatchScores(matchId)
+                _uiState.update { it.copy(successMessage = "Match scores fixed! Check My Matches.") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Fix failed: ${e.message}") }
+            }
+        }
+    }
+
     // ── Payments ─────────────────────────────────────────────────────────────
 
     fun verifyPayment(paymentId: String) {
@@ -1061,6 +1074,34 @@ class AdminViewModel @Inject constructor(
 
     fun clearMessage() {
         _uiState.update { it.copy(successMessage = null, error = null) }
+    }
+
+    // ── Manual Broadcast Updates ─────────────────────────────────────────────────
+
+    /**
+     * Send a manual broadcast update to players.
+     * @param title Update title
+     * @param body Update message body
+     * @param targetSport Empty string = All Users, otherwise specific sport name
+     */
+    fun sendBroadcastUpdate(title: String, body: String, targetSport: String = "") {
+        viewModelScope.launch {
+            try {
+                if (title.isBlank() || body.isBlank()) {
+                    _uiState.update { it.copy(error = "Title and body cannot be empty") }
+                    return@launch
+                }
+                
+                repository.createBroadcastUpdate(title, body, targetSport)
+                
+                val targetText = if (targetSport.isBlank()) "All Users" else "$targetSport players"
+                _uiState.update { 
+                    it.copy(successMessage = "Broadcast sent to $targetText successfully!") 
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Failed to send broadcast: ${e.message}") }
+            }
+        }
     }
 
     // ── Match Management ─────────────────────────────────────────────────────
@@ -1249,6 +1290,17 @@ class MyMatchesViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 repository.observeMyRegisteredMatchesRealtime().collect { matches ->
+                    android.util.Log.d("MyMatchesViewModel", "Received ${matches.size} matches from repository")
+                    matches.forEach { match ->
+                        android.util.Log.d("MyMatchesViewModel", "  - ${match.status}: ${match.teamA} vs ${match.teamB} | Score: ${match.scoreA}-${match.scoreB}")
+                    }
+                    
+                    val scheduled = matches.count { it.status == MatchStatus.SCHEDULED }
+                    val live = matches.count { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
+                    val completed = matches.count { it.status == MatchStatus.COMPLETED }
+                    
+                    android.util.Log.d("MyMatchesViewModel", "Tab counts - Scheduled: $scheduled, Live: $live, Completed: $completed")
+                    
                     _uiState.update {
                         it.copy(
                             myMatches  = matches,
@@ -1261,6 +1313,7 @@ class MyMatchesViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
+                android.util.Log.e("MyMatchesViewModel", "Error loading matches", e)
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }
         }
@@ -1373,6 +1426,7 @@ class ScorecardViewModel @Inject constructor(
 
 data class UpdatesUiState(
     val announcements: List<Announcement> = emptyList(),
+    val broadcastUpdates: List<com.sportflow.app.data.model.Update> = emptyList(),
     val lastOpenedAt: Timestamp? = null,
     val isLoading: Boolean = true,
     val error: String? = null
@@ -1389,6 +1443,11 @@ class UpdatesViewModel @Inject constructor(
         viewModelScope.launch {
             repository.observeAnnouncements().collect { announcements ->
                 _uiState.update { it.copy(announcements = announcements, isLoading = false) }
+            }
+        }
+        viewModelScope.launch {
+            repository.observePlayerUpdates().collect { updates ->
+                _uiState.update { it.copy(broadcastUpdates = updates) }
             }
         }
         viewModelScope.launch {

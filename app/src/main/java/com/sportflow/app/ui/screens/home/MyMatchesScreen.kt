@@ -583,6 +583,22 @@ private fun MyMatchCard(
             if (match.status == MatchStatus.COMPLETED) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
+                // DEBUG: Log what we're displaying
+                android.util.Log.d("MyMatchesUI", "Displaying completed match: ${match.teamA} vs ${match.teamB}")
+                android.util.Log.d("MyMatchesUI", "Sport: ${match.sportType}")
+                android.util.Log.d("MyMatchesUI", "scoreA=${match.scoreA}, scoreB=${match.scoreB}")
+                android.util.Log.d("MyMatchesUI", "setsWonA=${match.setsWonA}, setsWonB=${match.setsWonB}")
+                android.util.Log.d("MyMatchesUI", "completedSets=${match.completedSets}")
+                android.util.Log.d("MyMatchesUI", "winnerId=${match.winnerId}")
+                
+                // VISIBLE DEBUG - Remove after testing
+                Text(
+                    text = "DEBUG: setsWonA=${match.setsWonA}, setsWonB=${match.setsWonB}, completedSets=${match.completedSets}, winnerId=${match.winnerId}",
+                    style = SportFlowTheme.typography.bodySmall,
+                    color = Color.Red,
+                    modifier = Modifier.padding(4.dp)
+                )
+                
                 // Determine correct score based on sport type
                 val sport = SportType.fromString(match.sportType)
                 val finalScoreA = when (sport) {
@@ -593,6 +609,8 @@ private fun MyMatchCard(
                     SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonB
                     else -> match.scoreB
                 }
+                
+                android.util.Log.d("MyMatchesUI", "Displaying finalScoreA=$finalScoreA, finalScoreB=$finalScoreB")
                 
                 // Cricket-specific display (runs/wickets) with null safety
                 val displayScoreA = if (sport == SportType.CRICKET) {
@@ -605,6 +623,8 @@ private fun MyMatchCard(
                 } else {
                     if (finalScoreA == 0 && finalScoreB == 0 && match.winnerId.isBlank()) "--" else "$finalScoreB"
                 }
+                
+                android.util.Log.d("MyMatchesUI", "Final display: $displayScoreA - $displayScoreB")
                 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
