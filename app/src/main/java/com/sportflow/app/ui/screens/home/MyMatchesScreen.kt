@@ -55,13 +55,29 @@ fun MyMatchesScreen(
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf("Upcoming", "Live", "Completed")
 
-    // Filter matches by selected tab
+    // Filter matches by selected tab - SIMPLE AND DIRECT
     val filteredMatches = remember(uiState.myMatches, selectedTab) {
+        val allMatches = uiState.myMatches
         when (selectedTab) {
-            0 -> uiState.myMatches.filter { it.status == MatchStatus.SCHEDULED }
-            1 -> uiState.myMatches.filter { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
-            2 -> uiState.myMatches.filter { it.status == MatchStatus.COMPLETED }
-            else -> uiState.myMatches
+            0 -> {
+                // Upcoming: SCHEDULED status only
+                allMatches.filter { match -> 
+                    match.status == MatchStatus.SCHEDULED
+                }
+            }
+            1 -> {
+                // Live: LIVE or HALFTIME status
+                allMatches.filter { match -> 
+                    match.status == MatchStatus.LIVE || match.status == MatchStatus.HALFTIME
+                }
+            }
+            2 -> {
+                // Completed: COMPLETED status only
+                allMatches.filter { match -> 
+                    match.status == MatchStatus.COMPLETED
+                }
+            }
+            else -> allMatches
         }
     }
 
@@ -496,42 +512,69 @@ private fun MyMatchCard(
             // Live score display
             if (match.status == MatchStatus.LIVE || match.status == MatchStatus.HALFTIME) {
                 Spacer(modifier = Modifier.height(12.dp))
+                
+                // Determine correct score based on sport type
+                val sport = SportType.fromString(match.sportType)
+                val displayScoreA = when (sport) {
+                    SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.currentSetScoreA
+                    else -> match.scoreA
+                }
+                val displayScoreB = when (sport) {
+                    SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.currentSetScoreB
+                    else -> match.scoreB
+                }
+                
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = LiveRed.copy(alpha = 0.08f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = match.teamA,
-                            style = SportFlowTheme.typography.labelLarge,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                text = "${match.scoreA}  –  ${match.scoreB}",
-                                style = SportFlowTheme.typography.headlineLarge,
+                                text = match.teamA,
+                                style = SportFlowTheme.typography.labelLarge,
                                 color = TextPrimary,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
                             )
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(
+                                    text = "$displayScoreA  –  $displayScoreB",
+                                    style = SportFlowTheme.typography.headlineLarge,
+                                    color = TextPrimary,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = match.currentPeriod.ifEmpty { "LIVE" },
+                                    style = SportFlowTheme.typography.labelSmall,
+                                    color = LiveRed,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                             Text(
-                                text = match.currentPeriod.ifEmpty { "LIVE" },
-                                style = SportFlowTheme.typography.labelSmall,
-                                color = LiveRed,
-                                fontWeight = FontWeight.Bold
+                                text = match.teamB,
+                                style = SportFlowTheme.typography.labelLarge,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
                             )
                         }
-                        Text(
-                            text = match.teamB,
-                            style = SportFlowTheme.typography.labelLarge,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        
+                        // Show sets won for set-based sports
+                        if (sport == SportType.BADMINTON || sport == SportType.VOLLEYBALL || sport == SportType.TABLE_TENNIS) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Sets: ${match.setsWonA} - ${match.setsWonB}",
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
             }
@@ -539,74 +582,140 @@ private fun MyMatchCard(
             // Completed match score display
             if (match.status == MatchStatus.COMPLETED) {
                 Spacer(modifier = Modifier.height(12.dp))
-                val sportScore = SportScoreEngine.formatScore(match)
+                
+                // Determine correct score based on sport type
+                val sport = SportType.fromString(match.sportType)
+                val finalScoreA = when (sport) {
+                    SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonA
+                    else -> match.scoreA
+                }
+                val finalScoreB = when (sport) {
+                    SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonB
+                    else -> match.scoreB
+                }
+                
+                // Cricket-specific display (runs/wickets) with null safety
+                val displayScoreA = if (sport == SportType.CRICKET) {
+                    if (match.scoreA == 0 && match.wicketsA == 0) "--" else "${match.scoreA}/${match.wicketsA}"
+                } else {
+                    if (finalScoreA == 0 && finalScoreB == 0 && match.winnerId.isBlank()) "--" else "$finalScoreA"
+                }
+                val displayScoreB = if (sport == SportType.CRICKET) {
+                    if (match.scoreB == 0 && match.wicketsB == 0) "--" else "${match.scoreB}/${match.wicketsB}"
+                } else {
+                    if (finalScoreA == 0 && finalScoreB == 0 && match.winnerId.isBlank()) "--" else "$finalScoreB"
+                }
+                
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = SuccessGreen.copy(alpha = 0.08f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
+                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 text = match.teamA,
                                 style = SportFlowTheme.typography.labelLarge,
                                 color = TextPrimary,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = if (match.winnerId == match.teamA) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
                             )
-                            if (sportScore.subText.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = sportScore.subText,
-                                    style = SportFlowTheme.typography.labelSmall,
-                                    color = TextSecondary
-                                )
-                            }
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = sportScore.displayA,
+                                    text = "$displayScoreA  –  $displayScoreB",
                                     style = SportFlowTheme.typography.headlineLarge,
                                     color = TextPrimary,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
-                                    text = "–",
-                                    style = SportFlowTheme.typography.headlineMedium,
-                                    color = TextTertiary
-                                )
-                                Text(
-                                    text = sportScore.displayB,
-                                    style = SportFlowTheme.typography.headlineLarge,
-                                    color = TextPrimary,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                            if (sportScore.centerText.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = sportScore.centerText,
+                                    text = "FINAL",
                                     style = SportFlowTheme.typography.labelSmall,
                                     color = SuccessGreen,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                            Text(
+                                text = match.teamB,
+                                style = SportFlowTheme.typography.labelLarge,
+                                color = TextPrimary,
+                                fontWeight = if (match.winnerId == match.teamB) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
                         }
-                        Text(
-                            text = match.teamB,
-                            style = SportFlowTheme.typography.labelLarge,
-                            color = TextPrimary,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.End
-                        )
+                        
+                        // Show cricket overs with null safety
+                        if (sport == SportType.CRICKET) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            val oversDisplay = if (match.oversA.isNotBlank() || match.oversB.isNotBlank()) {
+                                "Overs: ${match.oversA.ifBlank { "0.0" }} | ${match.oversB.ifBlank { "0.0" }}"
+                            } else {
+                                "Overs: -- | --"
+                            }
+                            Text(
+                                text = oversDisplay,
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                        
+                        // Show set details for set-based sports with null safety
+                        if (sport == SportType.BADMINTON || sport == SportType.VOLLEYBALL || sport == SportType.TABLE_TENNIS) {
+                            if (match.completedSets.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Sets: ${match.completedSets.replace(",", " | ")}",
+                                    style = SportFlowTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            } else if (match.setsWonA > 0 || match.setsWonB > 0) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Sets Won: ${match.setsWonA} - ${match.setsWonB}",
+                                    style = SportFlowTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                        
+                        // Show winner with crown (bold winner name)
+                        if (match.winnerId.isNotBlank() && match.winnerId != "DRAW") {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Filled.EmojiEvents,
+                                    contentDescription = null,
+                                    tint = GnitsOrange,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "${match.winnerId} wins!",
+                                    style = SportFlowTheme.typography.labelSmall,
+                                    color = GnitsOrange,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        } else if (match.winnerId == "DRAW") {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Match Drawn",
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                     }
                 }
             }

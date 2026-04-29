@@ -73,7 +73,6 @@ import com.sportflow.app.data.model.RegistrationStatus
 import com.sportflow.app.data.model.SportUser
 import com.sportflow.app.data.model.Tournament
 import com.sportflow.app.data.model.TournamentStatus
-import com.sportflow.app.data.model.derivedStatus
 import com.sportflow.app.data.model.displayStatusLabel
 import com.sportflow.app.ui.components.SectionHeader
 import com.sportflow.app.ui.components.SportCard
@@ -399,7 +398,7 @@ private fun RegistrationScheduleCard(
         else -> "Pending"
     }
     val statusBadgeColor = when {
-        relatedMatch != null -> matchStatusColor(relatedMatch.derivedStatus())
+        relatedMatch != null -> matchStatusColor(relatedMatch.status)
         registration.status == RegistrationStatus.CONFIRMED -> InfoBlue
         registration.status == RegistrationStatus.CANCELLED -> TextTertiary
         else -> WarningAmber
@@ -540,7 +539,7 @@ private fun TimelineMatchCard(match: Match) {
             }
             StatusPill(
                 text = match.displayStatusLabel(),
-                color = matchStatusColor(match.derivedStatus())
+                color = matchStatusColor(match.status)
             )
         }
     }

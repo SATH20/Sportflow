@@ -164,10 +164,10 @@ class HomeViewModel @Inject constructor(
             try {
                 repository.getAllMatches().collect { matches ->
                     val liveMatches = matches
-                        .filter { it.derivedStatus() == MatchStatus.LIVE }
+                        .filter { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
                         .sortedBy { it.scheduledTime }
                     val upcomingMatches = matches
-                        .filter { it.derivedStatus() == MatchStatus.SCHEDULED }
+                        .filter { it.status == MatchStatus.SCHEDULED }
                         .sortedBy { it.scheduledTime }
 
                     _uiState.update {

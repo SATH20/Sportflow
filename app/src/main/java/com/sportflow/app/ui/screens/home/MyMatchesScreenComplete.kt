@@ -84,9 +84,9 @@ fun MyMatchesScreenComplete(
 
             // Filtered matches
             val filteredMatches = when (selectedTab) {
-                0 -> myMatches.filter { it.derivedStatus() == MatchStatus.SCHEDULED }
-                1 -> myMatches.filter { it.derivedStatus() == MatchStatus.LIVE }
-                2 -> myMatches.filter { it.derivedStatus() == MatchStatus.COMPLETED }
+                0 -> myMatches.filter { it.status == MatchStatus.SCHEDULED }
+                1 -> myMatches.filter { it.status == MatchStatus.LIVE || it.status == MatchStatus.HALFTIME }
+                2 -> myMatches.filter { it.status == MatchStatus.COMPLETED }
                 else -> emptyList()
             }
 
@@ -187,13 +187,11 @@ fun MyMatchCard(
     onCancel: () -> Unit,
     onNavigateToLive: () -> Unit
 ) {
-    val derivedStatus = match.derivedStatus()
-
     GlassmorphicCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        onClick = { if (derivedStatus == MatchStatus.LIVE) onNavigateToLive() }
+        onClick = { if (match.status == MatchStatus.LIVE || match.status == MatchStatus.HALFTIME) onNavigateToLive() }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Sport badge and status
@@ -257,11 +255,11 @@ fun MyMatchCard(
 
                     // Match status badge
                     Surface(
-                        color = when (derivedStatus) {
-                            MatchStatus.LIVE -> LiveRed
+                        color = when (match.status) {
+                            MatchStatus.LIVE, MatchStatus.HALFTIME -> LiveRed
                             MatchStatus.SCHEDULED -> InfoBlue
                             MatchStatus.COMPLETED -> SuccessGreen
-                            else -> Color.Gray
+                            MatchStatus.CANCELLED -> Color.Gray
                         },
                         shape = RoundedCornerShape(8.dp)
                     ) {
@@ -343,7 +341,7 @@ fun MyMatchCard(
             }
 
             // Cancel button (only for scheduled matches)
-            if (derivedStatus == MatchStatus.SCHEDULED) {
+            if (match.status == MatchStatus.SCHEDULED) {
                 Spacer(Modifier.height(12.dp))
                 OutlinedButton(
                     onClick = onCancel,
@@ -360,7 +358,7 @@ fun MyMatchCard(
             }
 
             // View live button (for live matches)
-            if (derivedStatus == MatchStatus.LIVE) {
+            if (match.status == MatchStatus.LIVE || match.status == MatchStatus.HALFTIME) {
                 Spacer(Modifier.height(12.dp))
                 PremiumButton(
                     text = "Watch Live",
@@ -372,7 +370,7 @@ fun MyMatchCard(
             }
 
             // Score display (for completed matches)
-            if (derivedStatus == MatchStatus.COMPLETED) {
+            if (match.status == MatchStatus.COMPLETED) {
                 Spacer(Modifier.height(12.dp))
                 Surface(
                     color = ScreenBg,

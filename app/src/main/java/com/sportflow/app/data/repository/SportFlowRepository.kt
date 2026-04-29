@@ -235,6 +235,51 @@ class SportFlowRepository @Inject constructor(
                     .document(userB.id)
                     .update("matchId", matchId)
                     .await()
+
+                // Also create registration sub-documents under the match
+                // so collectionGroup queries find them for My Matches
+                val matchName = "${userA.userName} vs ${userB.userName}"
+                try {
+                    val regDataA = hashMapOf(
+                        "uid" to userA.uid,
+                        "matchId" to matchId,
+                        "tournamentId" to tournamentId,
+                        "userName" to userA.userName,
+                        "email" to userA.email,
+                        "department" to userA.department,
+                        "status" to RegistrationStatus.CONFIRMED.name,
+                        "registeredAt" to com.google.firebase.Timestamp.now(),
+                        "sportType" to sportType,
+                        "matchName" to matchName
+                    )
+                    firestore.collection(MATCHES_COLLECTION)
+                        .document(matchId)
+                        .collection(REGISTRATIONS_COLLECTION)
+                        .document(userA.uid)
+                        .set(regDataA)
+                        .await()
+
+                    val regDataB = hashMapOf(
+                        "uid" to userB.uid,
+                        "matchId" to matchId,
+                        "tournamentId" to tournamentId,
+                        "userName" to userB.userName,
+                        "email" to userB.email,
+                        "department" to userB.department,
+                        "status" to RegistrationStatus.CONFIRMED.name,
+                        "registeredAt" to com.google.firebase.Timestamp.now(),
+                        "sportType" to sportType,
+                        "matchName" to matchName
+                    )
+                    firestore.collection(MATCHES_COLLECTION)
+                        .document(matchId)
+                        .collection(REGISTRATIONS_COLLECTION)
+                        .document(userB.uid)
+                        .set(regDataB)
+                        .await()
+                } catch (_: Exception) {
+                    // Non-critical — participants array is the primary tracking mechanism
+                }
             }
         }
 
@@ -249,6 +294,8 @@ class SportFlowRepository @Inject constructor(
             "teamB" to match.teamB,
             "teamADepartment" to match.teamADepartment,
             "teamBDepartment" to match.teamBDepartment,
+            "teamAId" to match.teamAId,
+            "teamBId" to match.teamBId,
             "teamAParticipants" to match.teamAParticipants,
             "teamBParticipants" to match.teamBParticipants,
             "scoreA" to 0,
@@ -294,6 +341,8 @@ class SportFlowRepository @Inject constructor(
             sportType = sportType,
             teamA = userAName,
             teamB = userBName,
+            teamAId = userAId,  // Set teamAId
+            teamBId = userBId,  // Set teamBId
             teamAParticipants = listOf(userAId),
             teamBParticipants = listOf(userBId),
             venue = venue,
@@ -320,9 +369,25 @@ class SportFlowRepository @Inject constructor(
     /**
      * Universal scoring entry point. Admin calls this for every button tap.
      * The [action] carries the Firestore field name and delta from [SportScoreEngine].
+     * 
+     * STATUS GUARD: Only allows scoring when match status is LIVE or HALFTIME.
      */
     suspend fun applyScoringAction(matchId: String, action: com.sportflow.app.data.model.ScoringAction) {
         if (action.delta == 0) return // "special" actions like Dot Ball, Foul (just highlights)
+
+        // STATUS GUARD: Check match status before allowing scoring
+        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+        val statusStr = doc.getString("status") ?: ""
+        val status = try {
+            MatchStatus.valueOf(statusStr)
+        } catch (_: Exception) {
+            MatchStatus.SCHEDULED
+        }
+        
+        // Only allow scoring if match is LIVE or HALFTIME
+        if (status != MatchStatus.LIVE && status != MatchStatus.HALFTIME) {
+            throw IllegalStateException("Cannot score: Match must be LIVE or HALFTIME. Current status: $status")
+        }
 
         firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
@@ -333,7 +398,6 @@ class SportFlowRepository @Inject constructor(
         // (they represent sets won, updated separately via newSetWon())
 
         // Read back for notification
-        val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
         val teamA = doc.getString("teamA") ?: "Team A"
         val teamB = doc.getString("teamB") ?: "Team B"
         val sport = doc.getString("sportType") ?: ""
@@ -512,6 +576,8 @@ class SportFlowRepository @Inject constructor(
     /** Live/Halftime → Completed, set winner + send result notification.
      *  For set-based sports (Badminton/Volleyball/TT) compares setsWonA vs setsWonB.
      *  For all other sports compares scoreA vs scoreB.
+     *  
+     *  CRITICAL: Explicitly saves all final scores to ensure they persist in Firestore.
      */
     suspend fun completeMatch(matchId: String) {
         val doc = firestore.collection(MATCHES_COLLECTION)
@@ -538,15 +604,54 @@ class SportFlowRepository @Inject constructor(
             }
         }
 
+        // CRITICAL: Explicitly save ALL final scores to Firestore
+        // This ensures scores persist even if there are any state management issues
+        val finalData = mutableMapOf<String, Any>(
+            "status" to MatchStatus.COMPLETED.name,
+            "currentPeriod" to "Full Time",
+            "winnerId" to winnerId,
+            // Preserve all scores
+            "scoreA" to match.scoreA,
+            "scoreB" to match.scoreB
+        )
+        
+        // Add sport-specific stats
+        when (sport) {
+            com.sportflow.app.data.model.SportType.CRICKET -> {
+                finalData["wicketsA"] = match.wicketsA
+                finalData["wicketsB"] = match.wicketsB
+                finalData["oversA"] = match.oversA
+                finalData["oversB"] = match.oversB
+                finalData["extrasA"] = match.extrasA
+                finalData["extrasB"] = match.extrasB
+            }
+            com.sportflow.app.data.model.SportType.BADMINTON,
+            com.sportflow.app.data.model.SportType.VOLLEYBALL,
+            com.sportflow.app.data.model.SportType.TABLE_TENNIS -> {
+                finalData["setsWonA"] = match.setsWonA
+                finalData["setsWonB"] = match.setsWonB
+                finalData["completedSets"] = match.completedSets
+                finalData["currentSetScoreA"] = match.currentSetScoreA
+                finalData["currentSetScoreB"] = match.currentSetScoreB
+            }
+            com.sportflow.app.data.model.SportType.BASKETBALL -> {
+                finalData["q1A"] = match.q1A
+                finalData["q1B"] = match.q1B
+                finalData["q2A"] = match.q2A
+                finalData["q2B"] = match.q2B
+                finalData["q3A"] = match.q3A
+                finalData["q3B"] = match.q3B
+                finalData["q4A"] = match.q4A
+                finalData["q4B"] = match.q4B
+            }
+            else -> {
+                // Football, Kabaddi, Athletics - scoreA/scoreB already saved
+            }
+        }
+
         firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
-            .update(
-                mapOf(
-                    "status" to MatchStatus.COMPLETED.name,
-                    "currentPeriod" to "Full Time",
-                    "winnerId" to winnerId
-                )
-            )
+            .update(finalData)
             .await()
 
         // Send result notification
@@ -1636,16 +1741,9 @@ class SportFlowRepository @Inject constructor(
     }
 
     /**
-     * Real-time stream of full Match documents for all matches the current user is
-     * registered in. Queries the top-level gnits_registrations collection for better
-     * reliability and then fetches the corresponding match documents.
-     *
-     * Result: admin manual edits (venue/team/time) reflect instantly on My Matches
-     * without requiring any registration mutation.
-     */
-    /**
-     * Real-time stream of all matches the current user is involved in.
-     * SIMPLIFIED VERSION - fetches ALL matches and filters by name.
+     * SIMPLE REAL-TIME QUERY: Get all matches where current user is teamAId or teamBId.
+     * This is the CLEAN approach - matches are directly linked to user UIDs.
+     * Real-time updates via snapshot listener ensure instant tab switching when admin changes status.
      */
     fun observeMyRegisteredMatchesRealtime(): Flow<List<com.sportflow.app.data.model.Match>> = callbackFlow {
         val uid = auth.currentUser?.uid
@@ -1655,74 +1753,42 @@ class SportFlowRepository @Inject constructor(
             return@callbackFlow
         }
 
-        // Get user name synchronously first
-        firestore.collection(USERS_COLLECTION).document(uid).get()
-            .addOnSuccessListener { doc ->
-                val userName = doc.getString("displayName") ?: ""
-                
-                // Now listen to ALL matches
-                firestore.collection(MATCHES_COLLECTION)
-                    .addSnapshotListener { snapshot, error ->
-                        if (error != null) {
-                            trySend(emptyList())
-                            return@addSnapshotListener
+        // Listen to ALL matches and filter client-side (Firestore doesn't support OR queries on different fields)
+        val matchListener = firestore.collection(MATCHES_COLLECTION)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptyList())
+                    return@addSnapshotListener
+                }
+
+                val userMatches = snapshot?.documents?.mapNotNull { doc ->
+                    val match = doc.toObject(com.sportflow.app.data.model.Match::class.java)
+                        ?.copy(id = doc.id) ?: return@mapNotNull null
+                    
+                    // Check if user is in this match via teamAId, teamBId, or participants arrays
+                    val isUserMatch = match.teamAId == uid || 
+                                     match.teamBId == uid ||
+                                     match.teamAParticipants.contains(uid) ||
+                                     match.teamBParticipants.contains(uid)
+                    
+                    if (isUserMatch) match else null
+                } ?: emptyList()
+
+                // Sort: live first, then scheduled, then completed
+                val sorted = userMatches.sortedWith(
+                    compareBy<com.sportflow.app.data.model.Match> {
+                        when (it.status) {
+                            MatchStatus.LIVE, MatchStatus.HALFTIME -> 0
+                            MatchStatus.SCHEDULED -> 1
+                            MatchStatus.COMPLETED -> 2
+                            MatchStatus.CANCELLED -> 3
                         }
-                        
-                        val userMatches = mutableListOf<com.sportflow.app.data.model.Match>()
-                        
-                        snapshot?.documents?.forEach { doc ->
-                            val match = doc.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = doc.id)
-                            if (match != null) {
-                                // Check ALL possible ways user could be in this match
-                                val inParticipants = match.teamAParticipants.contains(uid) || 
-                                                    match.teamBParticipants.contains(uid)
-                                
-                                // More flexible name matching - check if ANY part of the name matches
-                                val inTeamA = if (userName.isNotBlank()) {
-                                    val nameParts = userName.lowercase().split(" ")
-                                    val teamAParts = match.teamA.lowercase().split(" ", ",", "-", "_")
-                                    nameParts.any { part -> teamAParts.any { it.contains(part) || part.contains(it) } }
-                                } else false
-                                
-                                val inTeamB = if (userName.isNotBlank()) {
-                                    val nameParts = userName.lowercase().split(" ")
-                                    val teamBParts = match.teamB.lowercase().split(" ", ",", "-", "_")
-                                    nameParts.any { part -> teamBParts.any { it.contains(part) || part.contains(it) } }
-                                } else false
-                                
-                                if (inParticipants || inTeamA || inTeamB) {
-                                    userMatches.add(match)
-                                }
-                            }
-                        }
-                        
-                        // Sort and emit - ALWAYS emit even if empty
-                        val sorted = userMatches.sortedByDescending { it.scheduledTime }
-                        trySend(sorted)
-                    }
-            }
-            .addOnFailureListener {
-                // If we can't get user name, still try to match by UID only
-                firestore.collection(MATCHES_COLLECTION)
-                    .addSnapshotListener { snapshot, error ->
-                        if (error != null) {
-                            trySend(emptyList())
-                            return@addSnapshotListener
-                        }
-                        
-                        val userMatches = snapshot?.documents?.mapNotNull { doc ->
-                            val match = doc.toObject(com.sportflow.app.data.model.Match::class.java)?.copy(id = doc.id)
-                            if (match != null && (match.teamAParticipants.contains(uid) || match.teamBParticipants.contains(uid))) {
-                                match
-                            } else null
-                        } ?: emptyList()
-                        
-                        val sorted = userMatches.sortedByDescending { it.scheduledTime }
-                        trySend(sorted)
-                    }
+                    }.thenByDescending { it.scheduledTime }
+                )
+                trySend(sorted)
             }
 
-        awaitClose { }
+        awaitClose { matchListener.remove() }
     }
 
     /**
@@ -2113,6 +2179,8 @@ class SportFlowRepository @Inject constructor(
                     teamB = teamB,
                     teamADepartment = pair[0].department,
                     teamBDepartment = pair[1].department,
+                    teamAParticipants = listOf(pair[0].uid),
+                    teamBParticipants = listOf(pair[1].uid),
                     scoreA = 0,
                     scoreB = 0,
                     status = MatchStatus.SCHEDULED,
@@ -2124,8 +2192,8 @@ class SportFlowRepository @Inject constructor(
                     maxSquadSize = 0
                 )
             )
-            linkRegistrationToGeneratedMatch(createdMatchId, pair[0], seedMatch.sportType, seedMatch.tournamentName)
-            linkRegistrationToGeneratedMatch(createdMatchId, pair[1], seedMatch.sportType, seedMatch.tournamentName)
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[0], seedMatch.sportType, seedMatch.tournamentName, "A")
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[1], seedMatch.sportType, seedMatch.tournamentName, "B")
             created++
         }
 
@@ -2180,6 +2248,8 @@ class SportFlowRepository @Inject constructor(
                     teamB = teamB,
                     teamADepartment = pair[0].department,
                     teamBDepartment = pair[1].department,
+                    teamAParticipants = listOf(pair[0].uid),
+                    teamBParticipants = listOf(pair[1].uid),
                     status = MatchStatus.SCHEDULED,
                     venue = tournament.venue,
                     scheduledTime = com.google.firebase.Timestamp.now(),
@@ -2191,8 +2261,8 @@ class SportFlowRepository @Inject constructor(
                     allowedYears = tournament.allowedYears
                 )
             )
-            linkRegistrationToGeneratedMatch(createdMatchId, pair[0], tournament.sport, tournament.name)
-            linkRegistrationToGeneratedMatch(createdMatchId, pair[1], tournament.sport, tournament.name)
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[0], tournament.sport, tournament.name, "A")
+            linkRegistrationToGeneratedMatch(createdMatchId, pair[1], tournament.sport, tournament.name, "B")
             created++
         }
         return created
@@ -2202,7 +2272,8 @@ class SportFlowRepository @Inject constructor(
         matchId: String,
         registration: Registration,
         sportType: String,
-        tournamentName: String
+        tournamentName: String,
+        team: String = ""
     ) {
         if (matchId.isBlank() || registration.uid.isBlank()) return
 
@@ -2213,6 +2284,7 @@ class SportFlowRepository @Inject constructor(
             status = RegistrationStatus.CONFIRMED
         )
 
+        // Write to match sub-collection registrations
         firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
             .collection(REGISTRATIONS_COLLECTION)
@@ -2220,6 +2292,17 @@ class SportFlowRepository @Inject constructor(
             .set(matchRegistration.copy(id = registration.uid))
             .await()
 
+        // Also add this user's UID to the match participants array
+        // so observeMyRegisteredMatchesRealtime picks it up reliably
+        if (team.isNotBlank()) {
+            val participantsField = if (team == "A") "teamAParticipants" else "teamBParticipants"
+            firestore.collection(MATCHES_COLLECTION)
+                .document(matchId)
+                .update(participantsField, FieldValue.arrayUnion(registration.uid))
+                .await()
+        }
+
+        // Update the bridge collection
         if (registration.id.isNotBlank()) {
             firestore.collection(GNITS_REGISTRATIONS)
                 .document(registration.id)

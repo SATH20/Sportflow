@@ -1204,6 +1204,81 @@ fun AdminDashboardScreen(
                     return@Column
                 }
 
+                // ── Match Completed Warning ────────────────────────────────────
+                if (match.status == MatchStatus.COMPLETED) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = SuccessGreen.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = SuccessGreen
+                            )
+                            Text(
+                                text = "Match Completed",
+                                style = SportFlowTheme.typography.headlineSmall,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "This match has been finalized. Scoring is read-only. To make changes, revert to LIVE status first.",
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            
+                            // Show final score
+                            val sport = SportType.fromString(match.sportType)
+                            val finalScoreA = when (sport) {
+                                SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonA
+                                else -> match.scoreA
+                            }
+                            val finalScoreB = when (sport) {
+                                SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonB
+                                else -> match.scoreB
+                            }
+                            
+                            Text(
+                                text = "${match.teamA} $finalScoreA - $finalScoreB ${match.teamB}",
+                                style = SportFlowTheme.typography.displayMedium,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            
+                            if (match.winnerId.isNotBlank() && match.winnerId != "DRAW") {
+                                Row(
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Filled.EmojiEvents,
+                                        contentDescription = null,
+                                        tint = GnitsOrange,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Winner: ${match.winnerId}",
+                                        style = SportFlowTheme.typography.labelLarge,
+                                        color = GnitsOrange,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    return@Column
+                }
+
                 // ── Sport-specific score header ────────────────────────────────
                 SportSpecificScoreHeader(match = match, score = score, sportType = sportType)
 

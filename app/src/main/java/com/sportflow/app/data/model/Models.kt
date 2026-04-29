@@ -86,6 +86,12 @@ data class Match(
     val teamALogo: String = "",
     val teamBLogo: String = "",
     
+    // ── Team IDs for My Matches Query ────────────────────────────────
+    /** Registration document ID or user UID for Team A */
+    val teamAId: String = "",
+    /** Registration document ID or user UID for Team B */
+    val teamBId: String = "",
+    
     // ── Participant Tracking for My Matches ──────────────────────────
     /** UIDs of users in Team A (for individual matches, single UID) */
     val teamAParticipants: List<String> = emptyList(),
@@ -343,43 +349,22 @@ enum class MatchStatus {
     SCHEDULED, LIVE, HALFTIME, COMPLETED, CANCELLED
 }
 
-fun Match.derivedStatus(now: Timestamp = Timestamp.now()): MatchStatus {
-    if (status == MatchStatus.CANCELLED || status == MatchStatus.COMPLETED) {
-        return status
-    }
+/**
+ * REMOVED: Time-based auto-completion logic.
+ * Match status is now ONLY changed by explicit Admin actions:
+ * - SCHEDULED → LIVE (Admin clicks "Start Match")
+ * - LIVE → HALFTIME (Admin clicks "Half Time")
+ * - HALFTIME → LIVE (Admin clicks "Resume")
+ * - LIVE → COMPLETED (Admin clicks "End Match")
+ */
 
-    val start = scheduledTime ?: return status
-    val startMillis = start.toDate().time
-    val nowMillis = now.toDate().time
-    val endMillis = startMillis + estimatedDurationMillis()
-
-    return when {
-        nowMillis < startMillis -> MatchStatus.SCHEDULED
-        nowMillis <= endMillis -> MatchStatus.LIVE
-        else -> MatchStatus.COMPLETED
-    }
-}
-
-fun Match.displayStatusLabel(now: Timestamp = Timestamp.now()): String {
-    return when (derivedStatus(now)) {
+fun Match.displayStatusLabel(): String {
+    return when (status) {
         MatchStatus.SCHEDULED -> "Upcoming"
         MatchStatus.LIVE, MatchStatus.HALFTIME -> "Live"
         MatchStatus.COMPLETED -> "Completed"
         MatchStatus.CANCELLED -> "Cancelled"
     }
-}
-
-private fun Match.estimatedDurationMillis(): Long {
-    val minutes = when (SportType.fromString(sportType)) {
-        SportType.CRICKET -> 180L
-        SportType.FOOTBALL -> 120L
-        SportType.BASKETBALL -> 100L
-        SportType.VOLLEYBALL -> 90L
-        SportType.BADMINTON, SportType.TABLE_TENNIS -> 60L
-        SportType.KABADDI -> 60L
-        SportType.ATHLETICS -> 45L
-    }
-    return TimeUnit.MINUTES.toMillis(minutes)
 }
 
 data class Team(
