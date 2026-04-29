@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -369,47 +370,126 @@ fun MyMatchCard(
                 )
             }
 
-            // Score display (for completed matches)
+            // WIN/LOSS display (for completed matches)
             if (match.status == MatchStatus.COMPLETED) {
                 Spacer(Modifier.height(12.dp))
+                
+                // Determine winner and loser
+                val teamAWon = match.winnerId == match.teamA
+                val teamBWon = match.winnerId == match.teamB
+                val isDraw = match.winnerId.isBlank() || (!teamAWon && !teamBWon)
+                
                 Surface(
-                    color = ScreenBg,
                     shape = RoundedCornerShape(12.dp),
+                    color = SuccessGreen.copy(alpha = 0.08f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        // Team A
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
+                        ) {
                             Text(
-                                match.teamA,
-                                style = SportFlowTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
+                                text = match.teamA,
+                                style = SportFlowTheme.typography.labelLarge,
+                                color = TextPrimary,
+                                fontWeight = if (teamAWon) FontWeight.ExtraBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                            Spacer(Modifier.height(4.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = when {
+                                    teamAWon -> SuccessGreen.copy(alpha = 0.15f)
+                                    isDraw -> TextTertiary.copy(alpha = 0.15f)
+                                    else -> ErrorRed.copy(alpha = 0.15f)
+                                }
+                            ) {
+                                Text(
+                                    text = when {
+                                        teamAWon -> "WON"
+                                        isDraw -> "DRAW"
+                                        else -> "LOST"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    style = SportFlowTheme.typography.labelMedium,
+                                    color = when {
+                                        teamAWon -> SuccessGreen
+                                        isDraw -> TextSecondary
+                                        else -> ErrorRed
+                                    },
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                        
+                        // VS separator
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        ) {
                             Text(
-                                "${match.scoreA}",
-                                style = SportFlowTheme.typography.scoreDisplay.copy(fontSize = 28.sp),
+                                text = "VS",
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = TextTertiary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = "FINAL",
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = SuccessGreen,
                                 fontWeight = FontWeight.Bold,
-                                color = GnitsOrange
+                                fontSize = 9.sp
                             )
                         }
-                        Text("-", style = SportFlowTheme.typography.scoreDisplay.copy(fontSize = 28.sp), color = TextTertiary)
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        
+                        // Team B
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.End
+                        ) {
                             Text(
-                                match.teamB,
-                                style = SportFlowTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary
+                                text = match.teamB,
+                                style = SportFlowTheme.typography.labelLarge,
+                                color = TextPrimary,
+                                fontWeight = if (teamBWon) FontWeight.ExtraBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Text(
-                                "${match.scoreB}",
-                                style = SportFlowTheme.typography.scoreDisplay.copy(fontSize = 28.sp),
-                                fontWeight = FontWeight.Bold,
-                                color = GnitsOrange
-                            )
+                            Spacer(Modifier.height(4.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = when {
+                                    teamBWon -> SuccessGreen.copy(alpha = 0.15f)
+                                    isDraw -> TextTertiary.copy(alpha = 0.15f)
+                                    else -> ErrorRed.copy(alpha = 0.15f)
+                                }
+                            ) {
+                                Text(
+                                    text = when {
+                                        teamBWon -> "WON"
+                                        isDraw -> "DRAW"
+                                        else -> "LOST"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    style = SportFlowTheme.typography.labelMedium,
+                                    color = when {
+                                        teamBWon -> SuccessGreen
+                                        isDraw -> TextSecondary
+                                        else -> ErrorRed
+                                    },
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }

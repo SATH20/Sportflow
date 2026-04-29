@@ -579,162 +579,126 @@ private fun MyMatchCard(
                 }
             }
 
-            // Completed match score display
+            // Completed match - WIN/LOSS display
             if (match.status == MatchStatus.COMPLETED) {
                 Spacer(modifier = Modifier.height(12.dp))
                 
-                // DEBUG: Log what we're displaying
-                android.util.Log.d("MyMatchesUI", "Displaying completed match: ${match.teamA} vs ${match.teamB}")
-                android.util.Log.d("MyMatchesUI", "Sport: ${match.sportType}")
-                android.util.Log.d("MyMatchesUI", "scoreA=${match.scoreA}, scoreB=${match.scoreB}")
-                android.util.Log.d("MyMatchesUI", "setsWonA=${match.setsWonA}, setsWonB=${match.setsWonB}")
-                android.util.Log.d("MyMatchesUI", "completedSets=${match.completedSets}")
-                android.util.Log.d("MyMatchesUI", "winnerId=${match.winnerId}")
-                
-                // VISIBLE DEBUG - Remove after testing
-                Text(
-                    text = "DEBUG: setsWonA=${match.setsWonA}, setsWonB=${match.setsWonB}, completedSets=${match.completedSets}, winnerId=${match.winnerId}",
-                    style = SportFlowTheme.typography.bodySmall,
-                    color = Color.Red,
-                    modifier = Modifier.padding(4.dp)
-                )
-                
-                // Determine correct score based on sport type
-                val sport = SportType.fromString(match.sportType)
-                val finalScoreA = when (sport) {
-                    SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonA
-                    else -> match.scoreA
-                }
-                val finalScoreB = when (sport) {
-                    SportType.BADMINTON, SportType.VOLLEYBALL, SportType.TABLE_TENNIS -> match.setsWonB
-                    else -> match.scoreB
-                }
-                
-                android.util.Log.d("MyMatchesUI", "Displaying finalScoreA=$finalScoreA, finalScoreB=$finalScoreB")
-                
-                // Cricket-specific display (runs/wickets) with null safety
-                val displayScoreA = if (sport == SportType.CRICKET) {
-                    if (match.scoreA == 0 && match.wicketsA == 0) "--" else "${match.scoreA}/${match.wicketsA}"
-                } else {
-                    if (finalScoreA == 0 && finalScoreB == 0 && match.winnerId.isBlank()) "--" else "$finalScoreA"
-                }
-                val displayScoreB = if (sport == SportType.CRICKET) {
-                    if (match.scoreB == 0 && match.wicketsB == 0) "--" else "${match.scoreB}/${match.wicketsB}"
-                } else {
-                    if (finalScoreA == 0 && finalScoreB == 0 && match.winnerId.isBlank()) "--" else "$finalScoreB"
-                }
-                
-                android.util.Log.d("MyMatchesUI", "Final display: $displayScoreA - $displayScoreB")
+                // Determine winner and loser
+                val teamAWon = match.winnerId == match.teamA
+                val teamBWon = match.winnerId == match.teamB
+                val isDraw = match.winnerId.isBlank() || (!teamAWon && !teamBWon)
                 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = SuccessGreen.copy(alpha = 0.08f),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Team A
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
                         ) {
                             Text(
                                 text = match.teamA,
                                 style = SportFlowTheme.typography.labelLarge,
                                 color = TextPrimary,
-                                fontWeight = if (match.winnerId == match.teamA) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
+                                fontWeight = if (teamAWon) FontWeight.ExtraBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = when {
+                                    teamAWon -> SuccessGreen.copy(alpha = 0.15f)
+                                    isDraw -> TextTertiary.copy(alpha = 0.15f)
+                                    else -> ErrorRed.copy(alpha = 0.15f)
+                                }
+                            ) {
                                 Text(
-                                    text = "$displayScoreA  –  $displayScoreB",
-                                    style = SportFlowTheme.typography.headlineLarge,
-                                    color = TextPrimary,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                                Text(
-                                    text = "FINAL",
-                                    style = SportFlowTheme.typography.labelSmall,
-                                    color = SuccessGreen,
+                                    text = when {
+                                        teamAWon -> "WON"
+                                        isDraw -> "DRAW"
+                                        else -> "LOST"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    style = SportFlowTheme.typography.labelMedium,
+                                    color = when {
+                                        teamAWon -> SuccessGreen
+                                        isDraw -> TextSecondary
+                                        else -> ErrorRed
+                                    },
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                        }
+                        
+                        // VS separator
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        ) {
+                            Text(
+                                text = "VS",
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = TextTertiary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "FINAL",
+                                style = SportFlowTheme.typography.labelSmall,
+                                color = SuccessGreen,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 9.sp
+                            )
+                        }
+                        
+                        // Team B
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.End
+                        ) {
                             Text(
                                 text = match.teamB,
                                 style = SportFlowTheme.typography.labelLarge,
                                 color = TextPrimary,
-                                fontWeight = if (match.winnerId == match.teamB) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
+                                fontWeight = if (teamBWon) FontWeight.ExtraBold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
-                        }
-                        
-                        // Show cricket overs with null safety
-                        if (sport == SportType.CRICKET) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            val oversDisplay = if (match.oversA.isNotBlank() || match.oversB.isNotBlank()) {
-                                "Overs: ${match.oversA.ifBlank { "0.0" }} | ${match.oversB.ifBlank { "0.0" }}"
-                            } else {
-                                "Overs: -- | --"
-                            }
-                            Text(
-                                text = oversDisplay,
-                                style = SportFlowTheme.typography.bodySmall,
-                                color = TextSecondary,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                        
-                        // Show set details for set-based sports with null safety
-                        if (sport == SportType.BADMINTON || sport == SportType.VOLLEYBALL || sport == SportType.TABLE_TENNIS) {
-                            if (match.completedSets.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Sets: ${match.completedSets.replace(",", " | ")}",
-                                    style = SportFlowTheme.typography.bodySmall,
-                                    color = TextSecondary,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            } else if (match.setsWonA > 0 || match.setsWonB > 0) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "Sets Won: ${match.setsWonA} - ${match.setsWonB}",
-                                    style = SportFlowTheme.typography.bodySmall,
-                                    color = TextSecondary,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-                        
-                        // Show winner with crown (bold winner name)
-                        if (match.winnerId.isNotBlank() && match.winnerId != "DRAW") {
                             Spacer(modifier = Modifier.height(4.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = when {
+                                    teamBWon -> SuccessGreen.copy(alpha = 0.15f)
+                                    isDraw -> TextTertiary.copy(alpha = 0.15f)
+                                    else -> ErrorRed.copy(alpha = 0.15f)
+                                }
                             ) {
-                                Icon(
-                                    Icons.Filled.EmojiEvents,
-                                    contentDescription = null,
-                                    tint = GnitsOrange,
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = "${match.winnerId} wins!",
-                                    style = SportFlowTheme.typography.labelSmall,
-                                    color = GnitsOrange,
+                                    text = when {
+                                        teamBWon -> "WON"
+                                        isDraw -> "DRAW"
+                                        else -> "LOST"
+                                    },
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                                    style = SportFlowTheme.typography.labelMedium,
+                                    color = when {
+                                        teamBWon -> SuccessGreen
+                                        isDraw -> TextSecondary
+                                        else -> ErrorRed
+                                    },
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                        } else if (match.winnerId == "DRAW") {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Match Drawn",
-                                style = SportFlowTheme.typography.labelSmall,
-                                color = TextSecondary,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.fillMaxWidth()
-                            )
                         }
                     }
                 }
