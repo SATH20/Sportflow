@@ -90,6 +90,11 @@ dependencies {
     // Accompanist
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.34.0")
 
+    // WorkManager — for periodic 1-hour match reminder background checks
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("androidx.hilt:hilt-work:1.2.0")
+    ksp("androidx.hilt:hilt-compiler:1.2.0")
+
     // Coil (image loading)
     implementation("io.coil-kt:coil-compose:2.7.0")
 

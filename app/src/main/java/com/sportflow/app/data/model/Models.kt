@@ -518,7 +518,10 @@ data class SportUser(
     val teamId: String = "",
     val photoUrl: String = "",
     /** Default sport-specific role chosen by the player */
-    val preferredSportRole: String = ""
+    val preferredSportRole: String = "",
+    /** Last known FCM token for direct notification delivery */
+    val fcmToken: String = "",
+    val fcmUpdatedAt: Timestamp? = null
 )
 
 enum class UserRole { PLAYER, ADMIN, ORGANIZER }
@@ -784,6 +787,18 @@ data class Update(
     val title: String = "",
     val body: String = "",
     val targetSport: String = "",  // Empty = All Users, otherwise specific sport (e.g., "Cricket")
+    val updateType: String = "manual", // manual | match_result
+    val matchId: String = "",
+    val tournamentId: String = "",
+    val sportType: String = "",
+    val matchStatus: String = "",
+    val teamA: String = "",
+    val teamB: String = "",
+    val winnerName: String = "",
+    val scoreLine: String = "",
+    val venue: String = "",
+    val round: String = "",
+    val scheduledTime: com.google.firebase.Timestamp? = null,
     val createdAt: com.google.firebase.Timestamp? = null,
     val createdBy: String = ""
 )

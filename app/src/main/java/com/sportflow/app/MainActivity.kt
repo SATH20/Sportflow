@@ -14,17 +14,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import com.sportflow.app.data.service.NotificationManager
 import com.sportflow.app.ui.navigation.SportFlowNavHost
 import com.sportflow.app.ui.theme.SportFlowTheme
 import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    /** Injected by Hilt — listens for Firestore match status / registration changes */
-    @Inject lateinit var notificationManager: NotificationManager
 
     // Runtime permission launcher for POST_NOTIFICATIONS (Android 13+)
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -38,20 +34,12 @@ class MainActivity : ComponentActivity() {
         // Request notification permission on Android 13+ (API 33+)
         requestNotificationPermissionIfNeeded()
 
-        // Start Firestore real-time listeners for foreground notifications
-        // (match status changes, registration confirmations)
-        notificationManager.start()
 
         setContent {
             MainContent()
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        // Stop listeners cleanly — they are re-created on next launch
-        notificationManager.stop()
-    }
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -72,10 +72,11 @@ class NotificationManager @Inject constructor(
             .await()
         if (!doc.exists()) return
 
-        val topic = doc.getString("topic").orEmpty()
-        if (!shouldHandleTopic(topic)) return
-
         val type = doc.getString("type") ?: return
+        val topic = doc.getString("topic").orEmpty()
+        val targetUserIds = (doc.get("targetUserIds") as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+        if (!shouldHandleNotification(topic, targetUserIds, type)) return
+
         val title = doc.getString("title") ?: "GNITS Sports"
         val body = doc.getString("body") ?: ""
         val matchId = doc.getString("matchId") ?: ""
@@ -87,12 +88,19 @@ class NotificationManager @Inject constructor(
         }
 
         val channelId = when (type) {
-            "score_update" -> GnitsMessagingService.CHANNEL_LIVE_SCORE
+            "score_update" -> {
+                // SILENT: Score updates NEVER generate a push notification.
+                // Scores sync via Firestore SnapshotListener for real-time UI only.
+                markTriggerHandled(triggerId)
+                return
+            }
             "match_start" -> GnitsMessagingService.CHANNEL_MATCH_START
-            "match_end", "fixture_change", "announcement" -> GnitsMessagingService.CHANNEL_TOURNAMENT
+            "match_end", "match_scheduled", "fixture_change", "announcement", "tournament_created" ->
+                GnitsMessagingService.CHANNEL_TOURNAMENT
             "registration_success", "registration_accepted", "registration_denied" -> GnitsMessagingService.CHANNEL_PAYMENT
             "spot_opened", "squad_closed" -> GnitsMessagingService.CHANNEL_SQUAD_MGMT
-            "admin_registration_pending" -> GnitsMessagingService.CHANNEL_MATCH_START
+            "admin_registration_pending", "tournament_full", "venue_conflict" -> GnitsMessagingService.CHANNEL_ADMIN
+            "match_reminder" -> GnitsMessagingService.CHANNEL_MATCH_START
             else -> GnitsMessagingService.CHANNEL_MATCH_START
         }
 
@@ -120,21 +128,57 @@ class NotificationManager @Inject constructor(
         prefs.edit().putBoolean("handled_trigger_$triggerId", true).apply()
     }
 
-    private suspend fun shouldHandleTopic(topic: String): Boolean {
-        if (topic.isBlank() || topic == SportFlowRepository.FCM_TOPIC_ALL) {
-            return true
-        }
-
+    private suspend fun shouldHandleNotification(
+        topic: String,
+        targetUserIds: List<String>,
+        type: String
+    ): Boolean {
         val currentUser = auth.currentUser ?: return false
         val profile = repository.getCurrentUserProfile()
+        val role = profile?.role ?: UserRole.PLAYER
+
+        if (!isTypeAllowedForRole(type, role)) return false
+        if (targetUserIds.contains(currentUser.uid)) return true
 
         return when {
+            topic.isBlank() -> false
+            topic == SportFlowRepository.FCM_TOPIC_GENERAL || topic == SportFlowRepository.FCM_TOPIC_ALL ->
+                role != UserRole.ADMIN
             topic == SportFlowRepository.FCM_TOPIC_ADMIN ->
-                profile?.role == UserRole.ADMIN
+                role == UserRole.ADMIN
             topic == "user_${currentUser.uid}" -> true
+            topic.startsWith("tournament_") ->
+                role != UserRole.ADMIN &&
+                    repository.getApprovedTournamentIdsForCurrentUser()
+                        .contains(topic.removePrefix("tournament_"))
             topic.startsWith("dept_") ->
                 profile?.department?.let { "dept_$it" == topic } == true
-            else -> true
+            else -> false
+        }
+    }
+
+    private fun isTypeAllowedForRole(type: String, role: UserRole): Boolean {
+        // Score updates are handled via SnapshotListener only — never generate push
+        if (type == "score_update") return false
+
+        val adminOnly = setOf("admin_registration_pending", "tournament_full", "venue_conflict")
+        val playerOnly = setOf(
+            "registration_success",
+            "registration_accepted",
+            "registration_denied",
+            "match_scheduled",
+            "match_reminder",
+            "match_start",
+            "match_end",
+            "tournament_created",
+            "fixture_change",
+            "announcement",
+            "spot_opened",
+            "squad_closed"
+        )
+        return when (role) {
+            UserRole.ADMIN -> type in adminOnly
+            else -> type in playerOnly
         }
     }
 

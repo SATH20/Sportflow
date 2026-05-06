@@ -25,6 +25,10 @@ class SportFlowRepository @Inject constructor(
     private val auth: FirebaseAuth,
     private val messaging: FirebaseMessaging
 ) {
+    fun buildTournamentTopic(tournamentId: String): String = "tournament_$tournamentId"
+
+    fun buildUserTopic(userId: String): String = "user_$userId"
+
     private fun isPairStyleSport(sport: SportType): Boolean {
         return sport == SportType.BADMINTON || sport == SportType.TABLE_TENNIS
     }
@@ -46,13 +50,14 @@ class SportFlowRepository @Inject constructor(
         const val ANNOUNCEMENTS_COLLECTION = "announcements"
         const val UPDATES_COLLECTION = "gnits_updates"
 
-        // FCM topics — must match what Cloud Functions publishes to
-        const val FCM_TOPIC_ALL         = "gnits_sports_all"
-        const val FCM_TOPIC_SCORES      = "gnits_score_updates"
-        const val FCM_TOPIC_MATCH_START = "gnits_match_start"
-        const val FCM_TOPIC_TOURNAMENT  = "gnits_tournaments"
-        const val FCM_TOPIC_PAYMENT     = "gnits_payment"
-        const val FCM_TOPIC_ADMIN       = "gnits_admins"
+        // FCM topics — role and audience scoped
+        const val FCM_TOPIC_GENERAL     = "general_announcements"
+        const val FCM_TOPIC_ADMIN       = "admin_alerts"
+        const val FCM_TOPIC_ALL         = FCM_TOPIC_GENERAL
+        const val FCM_TOPIC_SCORES      = "gnits_score_updates" // legacy setting key; push dispatch disabled
+        const val FCM_TOPIC_MATCH_START = "gnits_match_start"   // legacy setting key; push dispatch disabled
+        const val FCM_TOPIC_TOURNAMENT  = "gnits_tournaments"   // legacy setting key; push dispatch disabled
+        const val FCM_TOPIC_PAYMENT     = "gnits_payment"       // legacy setting key; push dispatch disabled
     }
 
     // ── Matches — Real-time Listeners ────────────────────────────────────────
@@ -289,62 +294,126 @@ class SportFlowRepository @Inject constructor(
 
     /** Create a new match document in the gnits_matches collection */
     suspend fun createMatch(match: Match): String {
+        ensureNoVenueConflict(match)
+        val enrichedMatch = enrichMatchParticipants(match)
         val data = hashMapOf(
-            "sportType" to match.sportType,
-            "teamA" to match.teamA,
-            "teamB" to match.teamB,
-            "teamADepartment" to match.teamADepartment,
-            "teamBDepartment" to match.teamBDepartment,
-            "teamAId" to match.teamAId,
-            "teamBId" to match.teamBId,
-            "teamAParticipants" to match.teamAParticipants,
-            "teamBParticipants" to match.teamBParticipants,
+            "sportType" to enrichedMatch.sportType,
+            "teamA" to enrichedMatch.teamA,
+            "teamB" to enrichedMatch.teamB,
+            "teamADepartment" to enrichedMatch.teamADepartment,
+            "teamBDepartment" to enrichedMatch.teamBDepartment,
+            "teamAId" to enrichedMatch.teamAId,
+            "teamBId" to enrichedMatch.teamBId,
+            "teamAParticipants" to enrichedMatch.teamAParticipants,
+            "teamBParticipants" to enrichedMatch.teamBParticipants,
             "scoreA" to 0,
             "scoreB" to 0,
             "status" to MatchStatus.SCHEDULED.name,
-            "venue" to match.venue,
-            "scheduledTime" to match.scheduledTime,
+            "venue" to enrichedMatch.venue,
+            "scheduledTime" to enrichedMatch.scheduledTime,
             "currentPeriod" to "",
             "elapsedTime" to "",
-            "tournamentId" to match.tournamentId,
-            "tournamentName" to match.tournamentName,
-            "round" to match.round,
+            "tournamentId" to enrichedMatch.tournamentId,
+            "tournamentName" to enrichedMatch.tournamentName,
+            "round" to enrichedMatch.round,
             "highlights" to emptyList<String>(),
             "winnerId" to "",
             "createdBy" to (auth.currentUser?.uid ?: ""),
-            "eligibilityText" to match.eligibilityText,
-            "maxRegistrations" to match.maxRegistrations,
-            "registrationCount" to match.registrationCount,
-            "nextMatchId" to match.nextMatchId,
-            "maxSquadSize" to match.maxSquadSize,
-            "currentSquadCount" to match.currentSquadCount,
-            "allowedDepartments" to match.allowedDepartments,
-            "allowedYears" to match.allowedYears,
+            "eligibilityText" to enrichedMatch.eligibilityText,
+            "maxRegistrations" to enrichedMatch.maxRegistrations,
+            "registrationCount" to enrichedMatch.registrationCount,
+            "nextMatchId" to enrichedMatch.nextMatchId,
+            "maxSquadSize" to enrichedMatch.maxSquadSize,
+            "currentSquadCount" to enrichedMatch.currentSquadCount,
+            "allowedDepartments" to enrichedMatch.allowedDepartments,
+            "allowedYears" to enrichedMatch.allowedYears,
             "startNotifSent" to false,
             "reminderNotifSent" to false
         )
         val docRef = firestore.collection(MATCHES_COLLECTION).add(data).await()
-        
-        // MILESTONE NOTIFICATION: Schedule Creation (Global Broadcast)
-        // Send to ALL users to announce new match availability
-        if (match.scheduledTime != null) {
-            val dateFormat = java.text.SimpleDateFormat("MMM dd, hh:mm a", java.util.Locale.getDefault())
-            val scheduleTime = dateFormat.format(match.scheduledTime.toDate())
-            
-            val tournamentInfo = if (match.tournamentName.isNotBlank()) " | ${match.tournamentName}" else ""
-            
-            pushNotificationTrigger(
-                type = "match_scheduled",
-                title = "📅 New ${match.sportType} Match Scheduled",
-                body = "${match.teamA} vs ${match.teamB} at ${match.venue} on $scheduleTime$tournamentInfo",
-                matchId = docRef.id,
-                topic = FCM_TOPIC_ALL
-            )
-            
-            android.util.Log.d("MatchCreated", "Sent global notification for match: ${match.teamA} vs ${match.teamB}")
-        }
-        
+        // PLAYER-ONLY: Send personalized notifications to participants only (never admin)
+        sendMatchScheduledNotifications(docRef.id, enrichedMatch)
         return docRef.id
+    }
+
+    private suspend fun ensureNoVenueConflict(match: Match) {
+        val scheduledTime = match.scheduledTime ?: return
+        val conflicting = firestore.collection(MATCHES_COLLECTION)
+            .whereEqualTo("venue", match.venue)
+            .whereEqualTo("scheduledTime", scheduledTime)
+            .get()
+            .await()
+            .documents
+            .firstOrNull { doc ->
+                doc.id != match.id && (doc.getString("status") ?: "") != MatchStatus.CANCELLED.name
+            }
+
+        if (conflicting != null) {
+            val sport = conflicting.getString("sportType") ?: "another sport"
+            // ADMIN-ONLY: Venue conflict notification — never sent to players
+            pushNotificationTrigger(
+                type = "venue_conflict",
+                title = "⚠️ Scheduling Conflict",
+                body = "Scheduling Conflict: ${match.venue} is already booked for $sport at this time.",
+                matchId = conflicting.id,
+                topic = FCM_TOPIC_ADMIN
+            )
+            throw IllegalStateException("Scheduling Conflict: ${match.venue} is already booked for $sport at this time.")
+        }
+    }
+
+    private suspend fun enrichMatchParticipants(match: Match): Match {
+        if (match.tournamentId.isBlank() || (match.teamAParticipants.isNotEmpty() && match.teamBParticipants.isNotEmpty())) {
+            return match
+        }
+
+        val registrations = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("tournamentId", match.tournamentId)
+            .whereEqualTo("status", RegistrationStatus.CONFIRMED.name)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { it.toObject(Registration::class.java)?.copy(id = it.id) }
+
+        fun resolve(teamName: String): Registration? =
+            registrations.firstOrNull { registration ->
+                listOf(
+                    registration.fixtureUnitName,
+                    registration.teamName,
+                    registration.userName
+                ).any { candidate -> candidate.equals(teamName, ignoreCase = true) }
+            }
+
+        val teamAReg = resolve(match.teamA)
+        val teamBReg = resolve(match.teamB)
+
+        return match.copy(
+            teamAId = match.teamAId.ifBlank { teamAReg?.uid ?: "" },
+            teamBId = match.teamBId.ifBlank { teamBReg?.uid ?: "" },
+            teamAParticipants = if (match.teamAParticipants.isNotEmpty()) match.teamAParticipants else listOfNotNull(teamAReg?.uid),
+            teamBParticipants = if (match.teamBParticipants.isNotEmpty()) match.teamBParticipants else listOfNotNull(teamBReg?.uid)
+        )
+    }
+
+    private suspend fun sendMatchScheduledNotifications(matchId: String, match: Match) {
+        val scheduledTime = match.scheduledTime ?: return
+        val formattedTime = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
+            .format(scheduledTime.toDate())
+
+        sendPersonalizedNotification(
+            userIds = match.teamAParticipants,
+            type = "match_scheduled",
+            title = "Fixture Set!",
+            body = "Fixture Set! You are playing ${match.teamB} on $formattedTime in the ${match.venue}.",
+            matchId = matchId
+        )
+        sendPersonalizedNotification(
+            userIds = match.teamBParticipants,
+            type = "match_scheduled",
+            title = "Fixture Set!",
+            body = "Fixture Set! You are playing ${match.teamA} on $formattedTime in the ${match.venue}.",
+            matchId = matchId
+        )
     }
 
     /** Create a match between two registered users - ensures both users see it in My Matches */
@@ -537,22 +606,17 @@ class SportFlowRepository @Inject constructor(
     suspend fun startMatch(matchId: String, period: String = "1st Half") {
         val doc = firestore.collection(MATCHES_COLLECTION)
             .document(matchId).get().await()
-        
-        // ONE-TIME NOTIFICATION CHECK: Prevent duplicate "Match Started" notifications
+
         val alreadySent = doc.getBoolean("startNotifSent") ?: false
         if (alreadySent) {
             android.util.Log.d("StartMatch", "Match start notification already sent for $matchId, skipping")
         }
-        
+
         val teamA = doc.getString("teamA") ?: "Team A"
         val teamB = doc.getString("teamB") ?: "Team B"
-        val sport = doc.getString("sportType") ?: "Match"
-        val venue = doc.getString("venue") ?: "GNITS"
-        
-        // Get participant UIDs for personalized notifications
+        val tournamentId = doc.getString("tournamentId") ?: ""
         val teamAParticipants = doc.get("teamAParticipants") as? List<String> ?: emptyList()
         val teamBParticipants = doc.get("teamBParticipants") as? List<String> ?: emptyList()
-        val allParticipants = teamAParticipants + teamBParticipants
 
         firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
@@ -561,22 +625,36 @@ class SportFlowRepository @Inject constructor(
                     "status" to MatchStatus.LIVE.name,
                     "currentPeriod" to period,
                     "elapsedTime" to "00:00",
-                    "startNotifSent" to true  // Mark notification as sent
+                    "startNotifSent" to true
                 )
             )
             .await()
 
-        // MILESTONE NOTIFICATION: Match Start (only if not already sent)
         if (!alreadySent) {
-            // Send personalized notifications to match participants only
-            sendPersonalizedNotification(
-                userIds = allParticipants,
-                type = "match_start",
-                title = "🏁 Your $sport Match is LIVE!",
-                body = "$teamA vs $teamB has started at $venue. Good luck!",
-                matchId = matchId
-            )
-            android.util.Log.d("StartMatch", "Sent match start notification to ${allParticipants.size} participants")
+            if (tournamentId.isNotBlank()) {
+                pushNotificationTrigger(
+                    type = "match_start",
+                    title = "Game On!",
+                    body = "Game On! $teamA vs $teamB is live now. Head to the court!",
+                    matchId = matchId,
+                    topic = buildTournamentTopic(tournamentId)
+                )
+            } else {
+                sendPersonalizedNotification(
+                    userIds = teamAParticipants,
+                    type = "match_start",
+                    title = "Game On!",
+                    body = "Game On! Your match against $teamB is live now. Head to the court!",
+                    matchId = matchId
+                )
+                sendPersonalizedNotification(
+                    userIds = teamBParticipants,
+                    type = "match_start",
+                    title = "Game On!",
+                    body = "Game On! Your match against $teamA is live now. Head to the court!",
+                    matchId = matchId
+                )
+            }
         }
     }
 
@@ -607,36 +685,15 @@ class SportFlowRepository @Inject constructor(
             .await()
     }
 
-    /** Live/Halftime → Completed, set winner + send result notification.
-     *  For set-based sports (Badminton/Volleyball/TT) compares setsWonA vs setsWonB.
-     *  For all other sports compares scoreA vs scoreB.
-     *  
-     *  ALTERNATIVE FIX: Force fresh read from Firestore (bypass cache) before completing.
-     */
+    /** Live/Halftime → Completed, set winner + send result notification. */
     suspend fun completeMatch(matchId: String) {
-        // CRITICAL: Force fresh read from server (not cache)
         val doc = firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
-            .get(com.google.firebase.firestore.Source.SERVER) // Force server read
+            .get(com.google.firebase.firestore.Source.SERVER)
             .await()
 
-        val match = doc.toObject(Match::class.java) ?: return
+        val match = doc.toObject(Match::class.java)?.copy(id = doc.id) ?: return
 
-        android.util.Log.d("CompleteMatch", "=== COMPLETING MATCH ===")
-        android.util.Log.d("CompleteMatch", "Match ID: ${match.id}")
-        android.util.Log.d("CompleteMatch", "Teams: ${match.teamA} vs ${match.teamB}")
-        android.util.Log.d("CompleteMatch", "Sport: ${match.sportType}")
-        android.util.Log.d("CompleteMatch", "Status: ${match.status}")
-        android.util.Log.d("CompleteMatch", "ScoreA from Firestore: ${match.scoreA}")
-        android.util.Log.d("CompleteMatch", "ScoreB from Firestore: ${match.scoreB}")
-
-        // If scores are still 0, something is wrong with scoring
-        if (match.scoreA == 0 && match.scoreB == 0) {
-            android.util.Log.e("CompleteMatch", "WARNING: Both scores are 0! Match was not scored properly.")
-            android.util.Log.e("CompleteMatch", "Check if applyScoringAction() was called during the match.")
-        }
-
-        // Determine winner based on sport type
         val sport = com.sportflow.app.data.model.SportType.fromString(match.sportType)
         val winnerId = when (sport) {
             com.sportflow.app.data.model.SportType.BADMINTON,
@@ -653,21 +710,14 @@ class SportFlowRepository @Inject constructor(
             }
         }
 
-        android.util.Log.d("CompleteMatch", "Calculated Winner: $winnerId")
-
-        // ATOMIC UPDATE: Create ONE map with ALL final data
         val atomicUpdate = mutableMapOf<String, Any>(
-            // Status and winner
             "status" to MatchStatus.COMPLETED.name,
             "currentPeriod" to "Full Time",
             "winnerId" to winnerId,
-            
-            // CRITICAL: Explicitly save current scores (even if 0)
             "scoreA" to match.scoreA,
             "scoreB" to match.scoreB
         )
-        
-        // Add sport-specific stats to the SAME update
+
         when (sport) {
             com.sportflow.app.data.model.SportType.CRICKET -> {
                 atomicUpdate["wicketsA"] = match.wicketsA
@@ -676,7 +726,6 @@ class SportFlowRepository @Inject constructor(
                 atomicUpdate["oversB"] = match.oversB
                 atomicUpdate["extrasA"] = match.extrasA
                 atomicUpdate["extrasB"] = match.extrasB
-                android.util.Log.d("CompleteMatch", "Cricket: ${match.scoreA}/${match.wicketsA} vs ${match.scoreB}/${match.wicketsB}, Overs: ${match.oversA} | ${match.oversB}")
             }
             com.sportflow.app.data.model.SportType.BADMINTON,
             com.sportflow.app.data.model.SportType.VOLLEYBALL,
@@ -686,7 +735,6 @@ class SportFlowRepository @Inject constructor(
                 atomicUpdate["completedSets"] = match.completedSets
                 atomicUpdate["currentSetScoreA"] = match.currentSetScoreA
                 atomicUpdate["currentSetScoreB"] = match.currentSetScoreB
-                android.util.Log.d("CompleteMatch", "Sets: ${match.setsWonA} - ${match.setsWonB}, Completed: ${match.completedSets}")
             }
             com.sportflow.app.data.model.SportType.BASKETBALL -> {
                 atomicUpdate["q1A"] = match.q1A
@@ -697,62 +745,103 @@ class SportFlowRepository @Inject constructor(
                 atomicUpdate["q3B"] = match.q3B
                 atomicUpdate["q4A"] = match.q4A
                 atomicUpdate["q4B"] = match.q4B
-                android.util.Log.d("CompleteMatch", "Basketball quarters saved")
             }
-            else -> {
-                android.util.Log.d("CompleteMatch", "Standard sport scores: ${match.scoreA} - ${match.scoreB}")
-            }
+            else -> Unit
         }
 
-        // SINGLE ATOMIC UPDATE
-        android.util.Log.d("CompleteMatch", "Executing atomic update with ${atomicUpdate.size} fields...")
-        android.util.Log.d("CompleteMatch", "Update data: $atomicUpdate")
-        
         firestore.collection(MATCHES_COLLECTION)
             .document(matchId)
             .update(atomicUpdate)
             .await()
-        
-        android.util.Log.d("CompleteMatch", "✅ Match completed successfully!")
-        android.util.Log.d("CompleteMatch", "======================")
 
-        // Verify the update by reading back
-        val verifyDoc = firestore.collection(MATCHES_COLLECTION)
-            .document(matchId)
-            .get(com.google.firebase.firestore.Source.SERVER)
-            .await()
-        
-        val verifyScoreA = verifyDoc.getLong("scoreA")?.toInt() ?: -1
-        val verifyScoreB = verifyDoc.getLong("scoreB")?.toInt() ?: -1
-        val verifyStatus = verifyDoc.getString("status") ?: "UNKNOWN"
-        
-        android.util.Log.d("CompleteMatch", "VERIFICATION: Status=$verifyStatus, ScoreA=$verifyScoreA, ScoreB=$verifyScoreB")
+        try {
+            createMatchResultBroadcast(
+                match.copy(
+                    id = matchId,
+                    status = MatchStatus.COMPLETED,
+                    currentPeriod = "Full Time",
+                    winnerId = winnerId
+                )
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("CompleteMatch", "Failed to persist result broadcast for $matchId", e)
+        }
 
-        // MILESTONE NOTIFICATION: Match End
-        // Get participant UIDs for personalized notifications
+        if (match.tournamentId.isNotBlank()) {
+            pushNotificationTrigger(
+                type = "match_end",
+                title = "Match Over!",
+                body = "Match Over! ${match.teamA} vs ${match.teamB}. Final Score: ${formatBroadcastScoreLine(match)}.",
+                matchId = matchId,
+                topic = buildTournamentTopic(match.tournamentId)
+            )
+        }
+
         val teamAParticipants = doc.get("teamAParticipants") as? List<String> ?: emptyList()
         val teamBParticipants = doc.get("teamBParticipants") as? List<String> ?: emptyList()
-        val allParticipants = teamAParticipants + teamBParticipants
-        
-        // Send personalized result notification to match participants only
-        val resultText = when (winnerId) {
-            "DRAW" -> "${match.teamA} ${match.scoreA} – ${match.scoreB} ${match.teamB} · It's a Draw!"
-            else   -> "🏆 $winnerId wins! ${match.teamA} ${match.scoreA} – ${match.scoreB} ${match.teamB}"
+        if (match.tournamentId.isBlank()) {
+            sendPersonalizedNotification(
+                userIds = teamAParticipants,
+                type = "match_end",
+                title = "Match Over!",
+                body = "Match Over! You played ${match.teamB}. Final Score: ${formatBroadcastScoreLine(match)}.",
+                matchId = matchId
+            )
+            sendPersonalizedNotification(
+                userIds = teamBParticipants,
+                type = "match_end",
+                title = "Match Over!",
+                body = "Match Over! You played ${match.teamA}. Final Score: ${formatBroadcastScoreLine(match)}.",
+                matchId = matchId
+            )
         }
-        
-        sendPersonalizedNotification(
-            userIds = allParticipants,
-            type = "match_end",
-            title = "Full Time! ${match.sportType} Result",
-            body = resultText,
-            matchId = matchId
-        )
-        
-        android.util.Log.d("CompleteMatch", "Sent match end notification to ${allParticipants.size} participants")
 
-        // Advance winner in bracket if this match is in a tournament
         if (match.tournamentId.isNotBlank() && winnerId != "DRAW") {
             advanceWinnerInBracket(match.tournamentId, matchId, winnerId)
+        }
+    }
+
+    suspend fun dispatchMatchReminderIfDue(matchId: String) {
+        firestore.runTransaction { tx ->
+            val ref = firestore.collection(MATCHES_COLLECTION).document(matchId)
+            val snap = tx.get(ref)
+            val status = snap.getString("status") ?: MatchStatus.SCHEDULED.name
+            val reminderSent = snap.getBoolean("reminderNotifSent") ?: false
+            val scheduledTime = snap.getTimestamp("scheduledTime")
+
+            if (status != MatchStatus.SCHEDULED.name || reminderSent || scheduledTime == null) {
+                return@runTransaction false
+            }
+
+            val millisUntilMatch = scheduledTime.toDate().time - System.currentTimeMillis()
+            val oneHourMillis = 60 * 60 * 1000L
+            val reminderWindowMillis = 60 * 1000L
+            if (millisUntilMatch !in (oneHourMillis - reminderWindowMillis)..oneHourMillis) {
+                return@runTransaction false
+            }
+
+            tx.update(ref, "reminderNotifSent", true)
+            true
+        }.await().let { shouldSend ->
+            if (!shouldSend) return
+
+            val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
+            val match = doc.toObject(Match::class.java)?.copy(id = doc.id) ?: return
+
+            sendPersonalizedNotification(
+                userIds = match.teamAParticipants,
+                type = "match_reminder",
+                title = "Match Reminder",
+                body = "Match Reminder: Your game against ${match.teamB} starts in 1 hour!",
+                matchId = matchId
+            )
+            sendPersonalizedNotification(
+                userIds = match.teamBParticipants,
+                type = "match_reminder",
+                title = "Match Reminder",
+                body = "Match Reminder: Your game against ${match.teamA} starts in 1 hour!",
+                matchId = matchId
+            )
         }
     }
 
@@ -771,34 +860,31 @@ class SportFlowRepository @Inject constructor(
     suspend fun fixCompletedMatchScores(matchId: String) {
         val doc = firestore.collection(MATCHES_COLLECTION).document(matchId).get().await()
         val completedSets = doc.getString("completedSets") ?: ""
-        
+
         if (completedSets.isBlank()) {
             android.util.Log.e("FixMatch", "No completedSets data found for match $matchId")
             return
         }
-        
-        // Parse completedSets: "11-2,0-0,1-11" -> count who won each set
+
         val sets = completedSets.split(",")
         var setsWonA = 0
         var setsWonB = 0
-        
+
         sets.forEach { set ->
             val scores = set.split("-")
             if (scores.size == 2) {
                 val scoreA = scores[0].toIntOrNull() ?: 0
                 val scoreB = scores[1].toIntOrNull() ?: 0
-                
+
                 when {
                     scoreA > scoreB -> setsWonA++
                     scoreB > scoreA -> setsWonB++
-                    // If tied, don't count (shouldn't happen in real matches)
                 }
             }
         }
-        
-        android.util.Log.d("FixMatch", "Calculated from '$completedSets': setsWonA=$setsWonA, setsWonB=$setsWonB")
-        
-        // Determine winner
+
+        android.util.Log.d("FixMatch", "Calculated from \"$completedSets\": setsWonA=$setsWonA, setsWonB=$setsWonB")
+
         val teamA = doc.getString("teamA") ?: ""
         val teamB = doc.getString("teamB") ?: ""
         val winnerId = when {
@@ -806,8 +892,7 @@ class SportFlowRepository @Inject constructor(
             setsWonB > setsWonA -> teamB
             else -> "DRAW"
         }
-        
-        // Update Firestore
+
         firestore.collection(MATCHES_COLLECTION).document(matchId)
             .update(mapOf(
                 "setsWonA" to setsWonA,
@@ -815,7 +900,7 @@ class SportFlowRepository @Inject constructor(
                 "winnerId" to winnerId
             ))
             .await()
-        
+
         android.util.Log.d("FixMatch", "✅ Fixed match $matchId: $teamA $setsWonA - $setsWonB $teamB, Winner: $winnerId")
     }
 
@@ -876,7 +961,7 @@ class SportFlowRepository @Inject constructor(
             title = "🏆 New ${tournament.sport} Tournament!",
             body = "${tournament.name} is now open for registration${prizeInfo}${eligibilityInfo}",
             matchId = "",
-            topic = FCM_TOPIC_ALL
+            topic = FCM_TOPIC_GENERAL
         )
         
         // Also create announcement for in-app feed
@@ -1080,7 +1165,8 @@ class SportFlowRepository @Inject constructor(
         result.user?.let { user ->
             val profile = firestore.collection(USERS_COLLECTION).document(user.uid).get().await()
                 .toObject(SportUser::class.java)
-            syncNotificationTopicsForUser(profile)
+            saveCurrentFcmToken(user.uid)
+            syncNotificationTopicsForCurrentUser(profile)
         }
     }
 
@@ -1103,14 +1189,8 @@ class SportFlowRepository @Inject constructor(
                 department = department
             )
             firestore.collection(USERS_COLLECTION).document(user.uid).set(sportUser).await()
-
-            // Auto-subscribe to department topic for push notifications
-            if (department.isNotBlank()) {
-                subscribeToTopic("dept_$department")
-            }
-            // Subscribe to general sports topic
-            subscribeToTopic("gnits_sports_all")
-            syncNotificationTopicsForUser(sportUser)
+            saveCurrentFcmToken(user.uid)
+            syncNotificationTopicsForCurrentUser(sportUser)
         }
     }
 
@@ -1154,43 +1234,146 @@ class SportFlowRepository @Inject constructor(
     // ── FCM Topic Subscriptions ─────────────────────────────────────────────
 
     fun subscribeToTopic(topic: String) {
+        if (topic.isBlank()) return
         messaging.subscribeToTopic(topic)
     }
 
     fun unsubscribeFromTopic(topic: String) {
+        if (topic.isBlank()) return
         messaging.unsubscribeFromTopic(topic)
     }
 
     /** Subscribe to all default topics for a new user */
     fun subscribeToDefaultTopics(department: String) {
-        subscribeToTopic(FCM_TOPIC_ALL)
-        subscribeToTopic(FCM_TOPIC_MATCH_START)
-        subscribeToTopic(FCM_TOPIC_SCORES)
-        subscribeToTopic(FCM_TOPIC_TOURNAMENT)
-        if (department.isNotBlank()) subscribeToTopic("dept_$department")
+        subscribeToTopic(FCM_TOPIC_GENERAL)
     }
 
     /** Called from Notifications settings — subscribe or unsubscribe per category */
     fun setNotificationCategory(category: String, enabled: Boolean) {
+        if (category != FCM_TOPIC_GENERAL && category != FCM_TOPIC_ADMIN) return
         if (enabled) subscribeToTopic(category) else unsubscribeFromTopic(category)
     }
 
-    private fun syncNotificationTopicsForUser(user: SportUser?) {
+    suspend fun syncApprovedTournamentTopicsForCurrentUser() {
+        syncTournamentTopicSubscriptions(getApprovedTournamentIdsForCurrentUser())
+    }
+
+    suspend fun saveFcmToken(token: String) {
+        val uid = auth.currentUser?.uid ?: return
+        firestore.collection(USERS_COLLECTION)
+            .document(uid)
+            .update(
+                mapOf(
+                    "fcmToken" to token,
+                    "fcmUpdatedAt" to com.google.firebase.Timestamp.now()
+                )
+            )
+            .await()
+    }
+
+    private suspend fun saveCurrentFcmToken(uid: String) {
+        val token = try {
+            messaging.token.await()
+        } catch (_: Exception) {
+            null
+        } ?: return
+
+        firestore.collection(USERS_COLLECTION)
+            .document(uid)
+            .update(
+                mapOf(
+                    "fcmToken" to token,
+                    "fcmUpdatedAt" to com.google.firebase.Timestamp.now()
+                )
+            )
+            .await()
+    }
+
+    private suspend fun getApprovedTournamentIdsForUser(uid: String): Set<String> {
+        return firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("uid", uid)
+            .whereEqualTo("status", RegistrationStatus.CONFIRMED.name)
+            .get()
+            .await()
+            .documents
+            .mapNotNull { it.getString("tournamentId")?.takeIf(String::isNotBlank) }
+            .toSet()
+    }
+
+    suspend fun getApprovedTournamentIdsForCurrentUser(): Set<String> {
+        val uid = auth.currentUser?.uid ?: return emptySet()
+        return getApprovedTournamentIdsForUser(uid)
+    }
+
+    fun observeApprovedTournamentTopicIds(): Flow<Set<String>> = callbackFlow {
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            trySend(emptySet())
+            close()
+            return@callbackFlow
+        }
+
+        val listener = firestore.collection(GNITS_REGISTRATIONS)
+            .whereEqualTo("uid", uid)
+            .whereEqualTo("status", RegistrationStatus.CONFIRMED.name)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    trySend(emptySet())
+                    return@addSnapshotListener
+                }
+
+                val tournamentIds = snapshot?.documents
+                    ?.mapNotNull { it.getString("tournamentId")?.takeIf(String::isNotBlank) }
+                    ?.toSet()
+                    ?: emptySet()
+                trySend(tournamentIds)
+            }
+        awaitClose { listener.remove() }
+    }
+
+    suspend fun syncNotificationTopicsForCurrentUser(user: SportUser?) {
+        unsubscribeFromTopic(FCM_TOPIC_GENERAL)
+        unsubscribeFromTopic(FCM_TOPIC_ADMIN)
+        unsubscribeFromTopic(FCM_TOPIC_MATCH_START)
+        unsubscribeFromTopic(FCM_TOPIC_SCORES)
+        unsubscribeFromTopic(FCM_TOPIC_TOURNAMENT)
+        unsubscribeFromTopic(FCM_TOPIC_PAYMENT)
         GnitsDepartment.entries.forEach { dept ->
             unsubscribeFromTopic("dept_${dept.name}")
         }
-        unsubscribeFromTopic(FCM_TOPIC_ADMIN)
-        subscribeToTopic(FCM_TOPIC_ALL)
-        subscribeToTopic(FCM_TOPIC_MATCH_START)
-        subscribeToTopic(FCM_TOPIC_SCORES)
-        subscribeToTopic(FCM_TOPIC_TOURNAMENT)
-        subscribeToTopic(FCM_TOPIC_PAYMENT)
+
+        val uid = auth.currentUser?.uid ?: return
+        unsubscribeFromTopic(buildUserTopic(uid))
+        syncTournamentTopicSubscriptions(emptySet())
+
         when (user?.role) {
-            UserRole.ADMIN -> subscribeToTopic(FCM_TOPIC_ADMIN)
-            else -> if (!user?.department.isNullOrBlank()) {
-                subscribeToTopic("dept_${user!!.department}")
+            UserRole.ADMIN -> {
+                subscribeToTopic(FCM_TOPIC_ADMIN)
+            }
+            else -> {
+                subscribeToTopic(FCM_TOPIC_GENERAL)
+                subscribeToTopic(buildUserTopic(uid))
+                syncTournamentTopicSubscriptions(getApprovedTournamentIdsForUser(uid))
             }
         }
+    }
+
+    suspend fun syncTournamentTopicSubscriptions(approvedTournamentIds: Set<String>) {
+        getAllTournamentIds().forEach { tournamentId ->
+            unsubscribeFromTopic(buildTournamentTopic(tournamentId))
+        }
+        approvedTournamentIds.forEach { tournamentId ->
+            subscribeToTopic(buildTournamentTopic(tournamentId))
+        }
+    }
+
+    private suspend fun getAllTournamentIds(): Set<String> {
+        return firestore.collection(TOURNAMENTS_COLLECTION)
+            .get()
+            .await()
+            .documents
+            .map { it.id }
+            .toSet()
     }
 
     /**
@@ -1203,15 +1386,23 @@ class SportFlowRepository @Inject constructor(
         title: String,
         body: String,
         matchId: String,
-        topic: String
+        topic: String,
+        targetUserIds: List<String> = emptyList(),
+        targetTokens: List<String> = emptyList()
     ) {
         try {
-            // For match_start notifications, deduplicate by type and matchId only
-            // to prevent repeated "Match is LIVE now" notifications
-            val dedupeKey = if (type == "match_start") {
-                "$type|$matchId"
+            val oneShotTypes = setOf("match_start", "match_end", "match_reminder")
+            val normalizedUserIds = targetUserIds.filter { it.isNotBlank() }.distinct().sorted()
+            val normalizedTokens = targetTokens.filter { it.isNotBlank() }.distinct().sorted()
+            val audienceKey = buildString {
+                if (topic.isNotBlank()) append("topic:$topic")
+                if (normalizedUserIds.isNotEmpty()) append("|users:${normalizedUserIds.joinToString(",")}")
+                if (normalizedTokens.isNotEmpty()) append("|tokens:${normalizedTokens.joinToString(",")}")
+            }
+            val dedupeKey = if (type in oneShotTypes) {
+                "$type|$matchId|$audienceKey"
             } else {
-                "$type|$matchId|$topic|${body.hashCode()}"
+                "$type|$matchId|$audienceKey|${body.hashCode()}"
             }
 
             val existingUnseen = firestore.collection(NOTIFICATION_TRIGGERS)
@@ -1230,6 +1421,8 @@ class SportFlowRepository @Inject constructor(
                     "body"      to body,
                     "matchId"   to matchId,
                     "topic"     to topic,
+                    "targetUserIds" to normalizedUserIds,
+                    "targetTokens" to normalizedTokens,
                     "dedupeKey" to dedupeKey,
                     "seen"      to false,
                     "sentAt"    to com.google.firebase.Timestamp.now(),
@@ -1252,10 +1445,12 @@ class SportFlowRepository @Inject constructor(
         body: String,
         matchId: String
     ) {
-        if (userIds.isEmpty()) return
+        val distinctUserIds = userIds.filter { it.isNotBlank() }.distinct()
+        if (distinctUserIds.isEmpty()) return
         
         try {
-            userIds.forEach { uid ->
+            val tokenByUserId = getFcmTokensForUsers(distinctUserIds)
+            distinctUserIds.forEach { uid ->
                 firestore.collection(USERS_COLLECTION)
                     .document(uid)
                     .collection(USER_NOTIFICATIONS)
@@ -1269,23 +1464,38 @@ class SportFlowRepository @Inject constructor(
                     ))
                     .await()
             }
-            
-            firestore.collection(NOTIFICATION_TRIGGERS).add(
-                mapOf(
-                    "type" to type,
-                    "title" to title,
-                    "body" to body,
-                    "matchId" to matchId,
-                    "targetUserIds" to userIds,
-                    "dedupeKey" to "$type|$matchId|${userIds.sorted().joinToString(",")}",
-                    "seen" to false,
-                    "sentAt" to com.google.firebase.Timestamp.now(),
-                    "processed" to false
-                )
-            ).await()
+            pushNotificationTrigger(
+                type = type,
+                title = title,
+                body = body,
+                matchId = matchId,
+                topic = "",
+                targetUserIds = distinctUserIds,
+                targetTokens = tokenByUserId.values.toList()
+            )
         } catch (e: Exception) {
             android.util.Log.e("PersonalizedNotif", "Failed: ${e.message}")
         }
+    }
+
+    private suspend fun getFcmTokensForUsers(userIds: List<String>): Map<String, String> {
+        val distinctUserIds = userIds.filter { it.isNotBlank() }.distinct()
+        if (distinctUserIds.isEmpty()) return emptyMap()
+
+        return distinctUserIds
+            .chunked(10)
+            .flatMap { chunk ->
+                firestore.collection(USERS_COLLECTION)
+                    .whereIn(FieldPath.documentId(), chunk)
+                    .get()
+                    .await()
+                    .documents
+            }
+            .mapNotNull { doc ->
+                val token = doc.getString("fcmToken")?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                doc.id to token
+            }
+            .toMap()
     }
 
     // ── Registration : transactional write ────────────────────────────────────────
@@ -1404,12 +1614,13 @@ class SportFlowRepository @Inject constructor(
                 .get().await().getString("department") ?: "" } catch (_: Exception) { "" }
         }
 
-        pushNotificationTrigger(
+        // PLAYER-ONLY: Personalized registration confirmation — never sent to admins
+        sendPersonalizedNotification(
+            userIds = listOf(user.uid),
             type    = "registration_success",
-            title   = "🎫 Registration Confirmed!",
-            body    = "You are registered for ${match.teamA} vs ${match.teamB} at ${match.venue}",
-            matchId = match.id,
-            topic   = if (dept.isNotBlank()) "dept_$dept" else FCM_TOPIC_ALL
+            title   = "🎫 Registration Submitted!",
+            body    = "You are registered for ${match.teamA} vs ${match.teamB} at ${match.venue}. Awaiting admin approval.",
+            matchId = match.id
         )
 
         // ── Write to top-level gnits_registrations for Admin Data Bridge ──────
@@ -1441,12 +1652,21 @@ class SportFlowRepository @Inject constructor(
         val maxSquadFinal = match.maxSquadSize.takeIf { it > 0 } ?: match.maxRegistrations
         if (maxSquadFinal > 0 && newSquadCount >= maxSquadFinal) {
             val matchName = "${match.teamA} vs ${match.teamB}"
+            // PLAYER-ONLY: Squad full notification — sent to general_announcements (player topic), not admin
             pushNotificationTrigger(
                 type    = "squad_closed",
                 title   = "🚫 Squad Full — ${match.sportType}",
                 body    = "Registrations for $matchName are now closed. The squad is full!",
                 matchId = match.id,
-                topic   = FCM_TOPIC_ALL
+                topic   = FCM_TOPIC_GENERAL
+            )
+            // ADMIN-ONLY: Tournament capacity reached notification
+            pushNotificationTrigger(
+                type    = "tournament_full",
+                title   = "Tournament Full",
+                body    = "Tournament Full: ${match.tournamentName.ifBlank { matchName }} registration limit ($newSquadCount/$maxSquadFinal teams) has been reached.",
+                matchId = match.id,
+                topic   = FCM_TOPIC_ADMIN
             )
         }
     }
@@ -1576,20 +1796,29 @@ class SportFlowRepository @Inject constructor(
 
         pushNotificationTrigger(
             type = "admin_registration_pending",
-            title = "New ${kind.name.lowercase().replace('_', ' ')} registration",
-            body = "$fixtureUnitName is waiting for approval in $matchName",
+            title = "New Registration",
+            body = "New Registration: ${registration.captainName} registered team '$fixtureUnitName' for ${match.sportType}. Review now.",
             matchId = match.id,
             topic = FCM_TOPIC_ADMIN
         )
 
         val maxSquadFinal = match.maxSquadSize.takeIf { it > 0 } ?: match.maxRegistrations
         if (maxSquadFinal > 0 && newSquadCount >= maxSquadFinal) {
+            // PLAYER-ONLY: Squad closed notification — never sent to admin topic
             pushNotificationTrigger(
                 type = "squad_closed",
                 title = "Registration Full - ${match.sportType}",
                 body = "Registrations for $matchName are now closed.",
                 matchId = match.id,
-                topic = FCM_TOPIC_ALL
+                topic = FCM_TOPIC_GENERAL
+            )
+            // ADMIN-ONLY: Capacity limit reached notification
+            pushNotificationTrigger(
+                type = "tournament_full",
+                title = "Tournament Full",
+                body = "Tournament Full: ${match.tournamentName.ifBlank { matchName }} registration limit ($newSquadCount/$maxSquadFinal teams) has been reached.",
+                matchId = match.id,
+                topic = FCM_TOPIC_ADMIN
             )
         }
     }
@@ -1710,8 +1939,8 @@ class SportFlowRepository @Inject constructor(
 
         pushNotificationTrigger(
             type = "admin_registration_pending",
-            title = "New ${kind.name.lowercase().replace('_', ' ')} registration",
-            body = "$fixtureUnitName is waiting for approval in ${tournament.name}",
+            title = "New Registration",
+            body = "New Registration: ${registration.captainName} registered team '$fixtureUnitName' for ${tournament.sport}. Review now.",
             matchId = "",
             topic = FCM_TOPIC_ADMIN
         )
@@ -1767,13 +1996,16 @@ class SportFlowRepository @Inject constructor(
         }.await()
 
         // Scenario A: a spot has just opened up in a previously-full squad
+        // PLAYER-ONLY: Spot opened notification — never sent to admin
         if (maxSquadSize > 0 && previousCount >= maxSquadSize) {
+            val tournamentIdRaw = matchSnap.getString("tournamentId") ?: ""
+            val spotTopic = if (tournamentIdRaw.isNotBlank()) buildTournamentTopic(tournamentIdRaw) else FCM_TOPIC_GENERAL
             pushNotificationTrigger(
                 type    = "spot_opened",
                 title   = "\uD83D\uDFE2 Spot Available \u2014 $sportType",
                 body    = "A spot has opened up in $matchName at $venue \u2014 register now!",
                 matchId = matchId,
-                topic   = FCM_TOPIC_ALL
+                topic   = spotTopic
             )
         }
 
@@ -2229,14 +2461,22 @@ class SportFlowRepository @Inject constructor(
     suspend fun createBroadcastUpdate(
         title: String,
         body: String,
-        targetSport: String = ""
+        targetSport: String = "",
+        attachedMatchId: String = ""
     ): String {
-        val data = hashMapOf(
-            "title" to title,
-            "body" to body,
-            "targetSport" to targetSport,
-            "createdAt" to com.google.firebase.Timestamp.now(),
-            "createdBy" to (auth.currentUser?.uid ?: "")
+        val attachedMatch = if (attachedMatchId.isBlank()) {
+            null
+        } else {
+            val doc = firestore.collection(MATCHES_COLLECTION).document(attachedMatchId).get().await()
+            doc.toObject(Match::class.java)?.copy(id = doc.id)
+        }
+
+        val data = buildBroadcastPayload(
+            title = title,
+            body = body,
+            targetSport = targetSport,
+            updateType = "manual",
+            match = attachedMatch
         )
         val ref = firestore.collection(UPDATES_COLLECTION).add(data).await()
         
@@ -2258,6 +2498,75 @@ class SportFlowRepository @Inject constructor(
         android.util.Log.d("BroadcastUpdate", "Created update: $title | Target: ${if (targetSport.isBlank()) "All Users" else targetSport}")
         
         return ref.id
+    }
+
+    private suspend fun createMatchResultBroadcast(match: Match): String {
+        val winnerText = when (match.winnerId) {
+            "", "DRAW" -> "Match drawn"
+            else -> "${match.winnerId} won"
+        }
+        val data = buildBroadcastPayload(
+            title = "Final Result: ${match.teamA} vs ${match.teamB}",
+            body = "$winnerText. ${formatBroadcastScoreLine(match)}",
+            targetSport = match.sportType,
+            updateType = "match_result",
+            match = match
+        )
+        val ref = firestore.collection(UPDATES_COLLECTION).add(data).await()
+        android.util.Log.d("BroadcastUpdate", "Stored match result broadcast for ${match.id}")
+        return ref.id
+    }
+
+    private fun buildBroadcastPayload(
+        title: String,
+        body: String,
+        targetSport: String,
+        updateType: String,
+        match: Match?
+    ): HashMap<String, Any> {
+        val data = hashMapOf<String, Any>(
+            "title" to title,
+            "body" to body,
+            "targetSport" to targetSport,
+            "updateType" to updateType,
+            "createdAt" to com.google.firebase.Timestamp.now(),
+            "createdBy" to (auth.currentUser?.uid ?: "")
+        )
+
+        if (match != null) {
+            data["matchId"] = match.id
+            data["tournamentId"] = match.tournamentId
+            data["sportType"] = match.sportType
+            data["matchStatus"] = match.status.name
+            data["teamA"] = match.teamA
+            data["teamB"] = match.teamB
+            data["winnerName"] = match.winnerId
+            data["scoreLine"] = formatBroadcastScoreLine(match)
+            data["venue"] = match.venue
+            data["round"] = match.round
+            match.scheduledTime?.let { data["scheduledTime"] = it }
+        }
+
+        return data
+    }
+
+    private fun formatBroadcastScoreLine(match: Match): String {
+        return when (SportType.fromString(match.sportType)) {
+            SportType.CRICKET -> "${match.scoreA}/${match.wicketsA} (${match.oversA}) - ${match.scoreB}/${match.wicketsB} (${match.oversB})"
+            SportType.BADMINTON,
+            SportType.VOLLEYBALL,
+            SportType.TABLE_TENNIS -> {
+                val setSummary = "${match.setsWonA}-${match.setsWonB}"
+                val completedSets = match.completedSets.takeIf { it.isNotBlank() }?.let { " | Sets: $it" } ?: ""
+                "Sets $setSummary$completedSets"
+            }
+            SportType.BASKETBALL -> {
+                val totalA = match.q1A + match.q2A + match.q3A + match.q4A
+                val totalB = match.q1B + match.q2B + match.q3B + match.q4B
+                "$totalA - $totalB"
+            }
+            else -> "${match.scoreA} - ${match.scoreB}"
+        }
     }
 
     /**
@@ -2429,29 +2738,46 @@ class SportFlowRepository @Inject constructor(
                     .await()
             } catch (_: Exception) {}
         }
+
+        var approvedEventName = matchName
         if (tournamentId.isNotBlank() && userId.isNotBlank()) {
             try {
-                firestore.collection(TOURNAMENTS_COLLECTION)
-                    .document(tournamentId)
+                val tournamentRef = firestore.collection(TOURNAMENTS_COLLECTION).document(tournamentId)
+                tournamentRef
                     .collection(REGISTRATIONS_COLLECTION)
                     .document(userId)
                     .update("status", RegistrationStatus.CONFIRMED.name)
                     .await()
+
+                val tournamentSnap = tournamentRef.get().await()
+                approvedEventName = tournamentSnap.getString("name").orEmpty().ifBlank { matchName }
                 if (fixtureUnitName.isNotBlank()) {
-                    firestore.collection(TOURNAMENTS_COLLECTION)
-                        .document(tournamentId)
+                    tournamentRef
                         .update("teams", FieldValue.arrayUnion(fixtureUnitName))
                         .await()
+
+                    val refreshedTournamentSnap = tournamentRef.get().await()
+                    val maxTeams = refreshedTournamentSnap.getLong("maxTeams")?.toInt() ?: 0
+                    val currentTeams = (refreshedTournamentSnap.get("teams") as? List<*>)?.size ?: 0
+                    if (maxTeams > 0 && currentTeams == maxTeams) {
+                        pushNotificationTrigger(
+                            type = "tournament_full",
+                            title = "Tournament Full",
+                            body = "Tournament Full: $approvedEventName registration limit ($currentTeams/$maxTeams teams) has been reached.",
+                            matchId = "",
+                            topic = FCM_TOPIC_ADMIN
+                        )
+                    }
                 }
             } catch (_: Exception) {}
         }
-        
-        pushNotificationTrigger(
+
+        sendPersonalizedNotification(
+            userIds = listOf(userId),
             type = "registration_accepted",
-            title = "✅ Registration Accepted",
-            body = "Your registration for $matchName has been approved!",
-            matchId = matchId,
-            topic = "user_$userId"
+            title = "Approved!",
+            body = "Approved! You are officially locked in for the $approvedEventName. Check your 'Upcoming' matches!",
+            matchId = matchId.ifBlank { tournamentId }
         )
     }
 
@@ -2519,16 +2845,19 @@ class SportFlowRepository @Inject constructor(
         )
 
         // Check if spot just opened in a previously full squad
+        // PLAYER-ONLY: Spot opened notification — never sent to admin
         val freshSnap = matchRef?.get()?.await()
         val maxSquad = freshSnap?.getLong("maxSquadSize")?.toInt() ?: 0
         val currentCount = freshSnap?.getLong("currentSquadCount")?.toInt() ?: 0
         if (matchRef != null && maxSquad > 0 && currentCount == maxSquad - 1) {
+            val denyTournamentId = freshSnap?.getString("tournamentId") ?: ""
+            val denySpotTopic = if (denyTournamentId.isNotBlank()) buildTournamentTopic(denyTournamentId) else FCM_TOPIC_GENERAL
             pushNotificationTrigger(
                 type = "spot_opened",
                 title = "🟢 Spot Available",
                 body = "A spot has opened up in $matchName - register now!",
                 matchId = matchId,
-                topic = FCM_TOPIC_ALL
+                topic = denySpotTopic
             )
         }
     }

@@ -43,6 +43,7 @@ class AuthViewModel @Inject constructor(
     private fun loadUserProfile(uid: String) {
         viewModelScope.launch {
             repository.getUserProfile(uid).collect { profile ->
+                repository.syncNotificationTopicsForCurrentUser(profile)
                 _uiState.update {
                     it.copy(
                         currentUser = profile,
@@ -198,6 +199,22 @@ class HomeViewModel @Inject constructor(
 class RoleHomeViewModel @Inject constructor(
     private val repository: SportFlowRepository
 ) : ViewModel() {
+    private val adminOnlyTypes = setOf("admin_registration_pending", "tournament_full", "venue_conflict")
+    private val playerOnlyTypes = setOf(
+        "registration_success",
+        "registration_accepted",
+        "registration_denied",
+        "match_scheduled",
+        "match_reminder",
+        "match_start",
+        "match_end",
+        "tournament_created",
+        "fixture_change",
+        "announcement",
+        "spot_opened",
+        "squad_closed"
+    )
+
     private val _uiState = MutableStateFlow(RoleHomeUiState())
     val uiState: StateFlow<RoleHomeUiState> = _uiState.asStateFlow()
 
@@ -223,11 +240,18 @@ class RoleHomeViewModel @Inject constructor(
             }
         }
         viewModelScope.launch {
+            val role = repository.getCurrentUserProfile()?.role ?: UserRole.PLAYER
             repository.observeNotifications().collect { notifications ->
+                val filtered = notifications.filter { notification ->
+                    when (role) {
+                        UserRole.ADMIN -> notification.type in adminOnlyTypes
+                        else -> notification.type in playerOnlyTypes
+                    }
+                }
                 _uiState.update {
                     it.copy(
-                        notifications = notifications.take(12),
-                        unseenNotificationCount = notifications.count { notification -> !notification.seen }
+                        notifications = filtered.take(12),
+                        unseenNotificationCount = filtered.count { notification -> !notification.seen }
                     )
                 }
             }
@@ -354,6 +378,7 @@ data class AdminUiState(
     val pendingPayments: List<Payment> = emptyList(),
     val tournaments: List<Tournament> = emptyList(),
     val allMatches: List<Match> = emptyList(),
+    val broadcastUpdates: List<com.sportflow.app.data.model.Update> = emptyList(),
     val selectedMatch: Match? = null,
     val isLoading: Boolean = true,
     val isGeneratingBracket: Boolean = false,
@@ -458,6 +483,13 @@ class AdminViewModel @Inject constructor(
                             selectedMatch = updatedSelected ?: state.selectedMatch
                         )
                     }
+                }
+            } catch (_: Exception) {}
+        }
+        viewModelScope.launch {
+            try {
+                repository.observeAllUpdates().collect { updates ->
+                    _uiState.update { it.copy(broadcastUpdates = updates) }
                 }
             } catch (_: Exception) {}
         }
@@ -1084,7 +1116,12 @@ class AdminViewModel @Inject constructor(
      * @param body Update message body
      * @param targetSport Empty string = All Users, otherwise specific sport name
      */
-    fun sendBroadcastUpdate(title: String, body: String, targetSport: String = "") {
+    fun sendBroadcastUpdate(
+        title: String,
+        body: String,
+        targetSport: String = "",
+        attachedMatchId: String = ""
+    ) {
         viewModelScope.launch {
             try {
                 if (title.isBlank() || body.isBlank()) {
@@ -1092,7 +1129,12 @@ class AdminViewModel @Inject constructor(
                     return@launch
                 }
                 
-                repository.createBroadcastUpdate(title, body, targetSport)
+                repository.createBroadcastUpdate(
+                    title = title,
+                    body = body,
+                    targetSport = targetSport,
+                    attachedMatchId = attachedMatchId
+                )
                 
                 val targetText = if (targetSport.isBlank()) "All Users" else "$targetSport players"
                 _uiState.update { 
@@ -1100,6 +1142,17 @@ class AdminViewModel @Inject constructor(
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(error = "Failed to send broadcast: ${e.message}") }
+            }
+        }
+    }
+
+    fun deleteBroadcastUpdate(updateId: String) {
+        viewModelScope.launch {
+            try {
+                repository.deleteBroadcastUpdate(updateId)
+                _uiState.update { it.copy(successMessage = "Broadcast deleted") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Failed to delete broadcast: ${e.message}") }
             }
         }
     }

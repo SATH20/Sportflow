@@ -17,11 +17,13 @@ class GnitsMessagingService : FirebaseMessagingService() {
 
     companion object {
         // Channel IDs — one per category so users can control each independently
+        const val CHANNEL_GENERAL     = "gnits_general"
         const val CHANNEL_LIVE_SCORE  = "gnits_live_scores"
         const val CHANNEL_MATCH_START = "gnits_match_start"
         const val CHANNEL_TOURNAMENT  = "gnits_tournament"
         const val CHANNEL_PAYMENT     = "gnits_payment"
         const val CHANNEL_SQUAD_MGMT  = "gnits_squad_management"
+        const val CHANNEL_ADMIN       = "gnits_admin_alerts"
 
         /**
          * Create all notification channels. Call this once from Application.onCreate()
@@ -34,6 +36,10 @@ class GnitsMessagingService : FirebaseMessagingService() {
             data class Ch(val id: String, val name: String, val desc: String, val importance: Int)
 
             listOf(
+                Ch(CHANNEL_GENERAL,
+                    "General Sports Alerts",
+                    "General tournament and emergency notifications",
+                    NotificationManager.IMPORTANCE_HIGH),
                 Ch(CHANNEL_LIVE_SCORE,
                     "⚽ Live Score Updates",
                     "Notified on every goal or point scored during a live GNITS match",
@@ -53,6 +59,10 @@ class GnitsMessagingService : FirebaseMessagingService() {
                 Ch(CHANNEL_SQUAD_MGMT,
                     "🔐 Squad Slot Alerts",
                     "Notified when a squad fills up or a spot opens. Register fast when a slot opens!",
+                    NotificationManager.IMPORTANCE_HIGH),
+                Ch(CHANNEL_ADMIN,
+                    "🛡️ Admin Operations",
+                    "Registration approvals, venue conflicts, and capacity alerts for administrators",
                     NotificationManager.IMPORTANCE_HIGH)
             ).forEach { ch ->
                 if (manager.getNotificationChannel(ch.id) == null) {
@@ -75,8 +85,16 @@ class GnitsMessagingService : FirebaseMessagingService() {
     /** FCM sends this when the device gets a new registration token */
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        // Token refresh — Firebase handles this automatically;
-        // if you have a custom backend you'd send it there here.
+        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: return
+        com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            .collection("gnits_users")
+            .document(uid)
+            .update(
+                mapOf(
+                    "fcmToken" to token,
+                    "fcmUpdatedAt" to com.google.firebase.Timestamp.now()
+                )
+            )
     }
 
     /**
@@ -101,15 +119,23 @@ class GnitsMessagingService : FirebaseMessagingService() {
         val matchId = data["matchId"]
 
         val channelId = when (type) {
-            "score_update"  -> CHANNEL_LIVE_SCORE
-            "match_start"   -> CHANNEL_MATCH_START
+            "score_update"  -> {
+                // SILENT: Score updates NEVER generate a push notification.
+                // Real-time scores sync via Firestore SnapshotListener only.
+                return
+            }
+            "match_start",
+            "match_reminder" -> CHANNEL_MATCH_START
             "match_end",
             "tournament"    -> CHANNEL_TOURNAMENT
             "squad_closed",
             "spot_opened",
             "registration_success" -> CHANNEL_SQUAD_MGMT
             "payment"       -> CHANNEL_PAYMENT
-            else            -> CHANNEL_MATCH_START
+            "admin_registration_pending",
+            "tournament_full",
+            "venue_conflict" -> CHANNEL_ADMIN
+            else            -> CHANNEL_GENERAL
         }
 
         // Persist to user's notification sub-collection for bell badge

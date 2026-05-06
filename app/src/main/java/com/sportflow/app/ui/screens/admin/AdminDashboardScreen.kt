@@ -60,7 +60,7 @@ fun AdminDashboardScreen(
     var denyReason by rememberSaveable { mutableStateOf("") }
     val tabs = listOf(
         "Create Tournament", "Live Scoring", "Create Match",
-        "Create Fixtures", "Manual Editor", "Tournaments", "Registration Approvals"
+        "Create Fixtures", "Manual Editor", "Tournaments", "Broadcast Center", "Registration Approvals"
     )
 
     // Broadcast dialog state
@@ -68,6 +68,7 @@ fun AdminDashboardScreen(
     var broadcastTitle by remember { mutableStateOf("") }
     var broadcastBody by remember { mutableStateOf("") }
     var broadcastTarget by remember { mutableStateOf("All Users") }
+    var broadcastMatchId by remember { mutableStateOf("") }
     val targetOptions = listOf("All Users") + SportType.entries.map { it.display }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -297,6 +298,32 @@ fun AdminDashboardScreen(
                 }
 
                 6 -> {
+                    item {
+                        SectionHeader(
+                            title = "Admin Broadcast Center",
+                            actionText = "New Broadcast",
+                            onAction = { showBroadcastDialog = true }
+                        )
+                    }
+                    item {
+                        AdminBroadcastOverview(
+                            updates = uiState.broadcastUpdates,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+                        )
+                    }
+                    if (uiState.broadcastUpdates.isEmpty()) {
+                        item { EmptyState("No broadcasts saved yet") }
+                    } else {
+                        items(uiState.broadcastUpdates, key = { it.id }) { update ->
+                            AdminBroadcastCard(
+                                update = update,
+                                onDelete = { viewModel.deleteBroadcastUpdate(update.id) }
+                            )
+                        }
+                    }
+                }
+
+                7 -> {
                     // ── REGISTRATIONS TAB (Admin Data Bridge) ───────────────────
                     // selectedReg and regFilter are hoisted to the parent Composable scope
 
@@ -434,23 +461,33 @@ fun AdminDashboardScreen(
                 title = broadcastTitle,
                 body = broadcastBody,
                 target = broadcastTarget,
+                attachedMatchId = broadcastMatchId,
+                availableMatches = uiState.allMatches,
                 targetOptions = targetOptions,
                 onTitleChange = { broadcastTitle = it },
                 onBodyChange = { broadcastBody = it },
                 onTargetChange = { broadcastTarget = it },
+                onAttachedMatchChange = { broadcastMatchId = it },
                 onDismiss = {
                     showBroadcastDialog = false
                     broadcastTitle = ""
                     broadcastBody = ""
                     broadcastTarget = "All Users"
+                    broadcastMatchId = ""
                 },
                 onSend = {
                     val targetSport = if (broadcastTarget == "All Users") "" else broadcastTarget
-                    viewModel.sendBroadcastUpdate(broadcastTitle, broadcastBody, targetSport)
+                    viewModel.sendBroadcastUpdate(
+                        title = broadcastTitle,
+                        body = broadcastBody,
+                        targetSport = targetSport,
+                        attachedMatchId = broadcastMatchId
+                    )
                     showBroadcastDialog = false
                     broadcastTitle = ""
                     broadcastBody = ""
                     broadcastTarget = "All Users"
+                    broadcastMatchId = ""
                 }
             )
         }
@@ -3434,6 +3471,210 @@ private fun CreateFixturesCard(
     }  // Close SportCard
 }
 
+@Composable
+private fun AdminBroadcastOverview(
+    updates: List<Update>,
+    modifier: Modifier = Modifier
+) {
+    val manualCount = updates.count { it.updateType == "manual" }
+    val resultCount = updates.count { it.updateType == "match_result" }
+    val attachedMatchCount = updates.count { it.matchId.isNotBlank() }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        StatTile(
+            icon = Icons.Filled.Campaign,
+            value = "${updates.size}",
+            label = "Saved",
+            accentColor = GnitsOrange,
+            modifier = Modifier.weight(1f)
+        )
+        StatTile(
+            icon = Icons.Filled.Edit,
+            value = "$manualCount",
+            label = "Manual",
+            accentColor = InfoBlue,
+            modifier = Modifier.weight(1f)
+        )
+        StatTile(
+            icon = Icons.Filled.EmojiEvents,
+            value = "$resultCount",
+            label = "Results",
+            accentColor = SuccessGreen,
+            modifier = Modifier.weight(1f)
+        )
+        StatTile(
+            icon = Icons.Filled.SportsScore,
+            value = "$attachedMatchCount",
+            label = "Linked",
+            accentColor = WarningAmber,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@Composable
+private fun AdminBroadcastCard(
+    update: Update,
+    onDelete: () -> Unit
+) {
+    SportCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = update.title,
+                        style = SportFlowTheme.typography.headlineSmall,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = formatAdminBroadcastTimestamp(update.createdAt),
+                        style = SportFlowTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(
+                        Icons.Outlined.DeleteOutline,
+                        contentDescription = "Delete broadcast",
+                        tint = LiveRed
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = update.body,
+                style = SportFlowTheme.typography.bodyMedium,
+                color = TextSecondary
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                BroadcastTag(
+                    label = if (update.updateType == "match_result") "Match Result" else "Manual",
+                    containerColor = if (update.updateType == "match_result") SuccessGreen.copy(alpha = 0.14f) else GnitsOrange.copy(alpha = 0.14f),
+                    contentColor = if (update.updateType == "match_result") SuccessGreen else GnitsOrange
+                )
+                BroadcastTag(
+                    label = if (update.targetSport.isBlank()) "All Users" else update.targetSport,
+                    containerColor = if (update.targetSport.isBlank()) InfoBlue.copy(alpha = 0.14f) else WarningAmber.copy(alpha = 0.14f),
+                    contentColor = if (update.targetSport.isBlank()) InfoBlue else WarningAmber
+                )
+                if (update.matchStatus.isNotBlank()) {
+                    BroadcastTag(
+                        label = update.matchStatus.replaceFirstChar { it.uppercase() },
+                        containerColor = OffWhite,
+                        contentColor = TextPrimary
+                    )
+                }
+            }
+
+            if (update.matchId.isNotBlank()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = ScreenBg,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = update.sportType.ifBlank { "Attached Match" },
+                            style = SportFlowTheme.typography.labelMedium,
+                            color = GnitsOrange,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = listOf(update.teamA, update.teamB).filter { it.isNotBlank() }.joinToString(" vs "),
+                            style = SportFlowTheme.typography.bodyLarge,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (update.scoreLine.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = update.scoreLine,
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextPrimary
+                            )
+                        }
+                        if (update.winnerName.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = if (update.winnerName == "DRAW") "Winner: Draw" else "Winner: ${update.winnerName}",
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = if (update.winnerName == "DRAW") TextSecondary else SuccessGreen,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        val detailLine = listOf(
+                            update.round,
+                            update.venue,
+                            update.scheduledTime?.let(::formatCompactTimestamp)
+                        ).filter { !it.isNullOrBlank() }.joinToString(" • ")
+                        if (detailLine.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = detailLine,
+                                style = SportFlowTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BroadcastTag(
+    label: String,
+    containerColor: Color,
+    contentColor: Color
+) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = containerColor
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = SportFlowTheme.typography.labelSmall,
+            color = contentColor,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+private fun broadcastMatchLabel(match: Match): String =
+    listOf(match.teamA, match.teamB).filter { it.isNotBlank() }.joinToString(" vs ")
+
+private fun formatAdminBroadcastTimestamp(timestamp: Timestamp?): String {
+    if (timestamp == null) return "Saved just now"
+    return SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(timestamp.toDate())
+}
+
+private fun formatCompactTimestamp(timestamp: Timestamp): String =
+    SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(timestamp.toDate())
+
 // ── Broadcast Dialog Component ────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -3442,14 +3683,19 @@ private fun BroadcastDialog(
     title: String,
     body: String,
     target: String,
+    attachedMatchId: String,
+    availableMatches: List<Match>,
     targetOptions: List<String>,
     onTitleChange: (String) -> Unit,
     onBodyChange: (String) -> Unit,
     onTargetChange: (String) -> Unit,
+    onAttachedMatchChange: (String) -> Unit,
     onDismiss: () -> Unit,
     onSend: () -> Unit
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var targetExpanded by remember { mutableStateOf(false) }
+    var matchExpanded by remember { mutableStateOf(false) }
+    val attachedMatch = availableMatches.find { it.id == attachedMatchId }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3498,7 +3744,7 @@ private fun BroadcastDialog(
                     placeholder = { Text("Enter your message here...") },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(120.dp),
+                        .height(96.dp),
                     maxLines = 5,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = GnitsOrange,
@@ -3508,8 +3754,8 @@ private fun BroadcastDialog(
                 
                 // Target Dropdown
                 ExposedDropdownMenuBox(
-                    expanded = expanded,
-                    onExpandedChange = { expanded = !expanded }
+                    expanded = targetExpanded,
+                    onExpandedChange = { targetExpanded = !targetExpanded }
                 ) {
                     OutlinedTextField(
                         value = target,
@@ -3517,7 +3763,7 @@ private fun BroadcastDialog(
                         readOnly = true,
                         label = { Text("Target Audience") },
                         trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = targetExpanded)
                         },
                         modifier = Modifier
                             .fillMaxWidth()
@@ -3529,8 +3775,8 @@ private fun BroadcastDialog(
                     )
                     
                     ExposedDropdownMenu(
-                        expanded = expanded,
-                        onDismissRequest = { expanded = false }
+                        expanded = targetExpanded,
+                        onDismissRequest = { targetExpanded = false }
                     ) {
                         targetOptions.forEach { option ->
                             DropdownMenuItem(
@@ -3553,9 +3799,98 @@ private fun BroadcastDialog(
                                 },
                                 onClick = {
                                     onTargetChange(option)
-                                    expanded = false
+                                    targetExpanded = false
                                 }
                             )
+                        }
+                    }
+                }
+
+                ExposedDropdownMenuBox(
+                    expanded = matchExpanded,
+                    onExpandedChange = { matchExpanded = !matchExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = attachedMatch?.let(::broadcastMatchLabel) ?: "No match attached",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Attach Match Details") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = matchExpanded)
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GnitsOrange,
+                            focusedLabelColor = GnitsOrange
+                        )
+                    )
+
+                    ExposedDropdownMenu(
+                        expanded = matchExpanded,
+                        onDismissRequest = { matchExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("No match attached") },
+                            onClick = {
+                                onAttachedMatchChange("")
+                                matchExpanded = false
+                            }
+                        )
+                        availableMatches.forEach { match ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(broadcastMatchLabel(match))
+                                        Text(
+                                            "${match.displayStatusLabel()} • ${match.sportType}",
+                                            style = SportFlowTheme.typography.bodySmall,
+                                            color = TextSecondary
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    onAttachedMatchChange(match.id)
+                                    matchExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                attachedMatch?.let { match ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = PureWhite,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(
+                                text = match.sportType,
+                                style = SportFlowTheme.typography.labelMedium,
+                                color = GnitsOrange,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = broadcastMatchLabel(match),
+                                style = SportFlowTheme.typography.bodyMedium,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            val detailLine = listOf(match.round, match.venue)
+                                .filter { it.isNotBlank() }
+                                .joinToString(" • ")
+                            if (detailLine.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = detailLine,
+                                    style = SportFlowTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                            }
                         }
                     }
                 }

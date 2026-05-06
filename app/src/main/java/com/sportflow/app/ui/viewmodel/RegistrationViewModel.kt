@@ -29,6 +29,7 @@ class RegistrationViewModel @Inject constructor(
     init {
         loadCurrentUser()
         observeRegistrations()
+        observeApprovedTournamentTopics()
     }
 
     private fun loadCurrentUser() {
@@ -56,6 +57,16 @@ class RegistrationViewModel @Inject constructor(
             repository.observeMyRegisteredTournamentIds().collect { ids ->
                 _uiState.update { it.copy(registeredTournamentIds = ids) }
             }
+        }
+    }
+
+    private fun observeApprovedTournamentTopics() {
+        viewModelScope.launch {
+            repository.observeApprovedTournamentTopicIds()
+                .distinctUntilChanged()
+                .collect { approvedTournamentIds ->
+                    repository.syncTournamentTopicSubscriptions(approvedTournamentIds)
+                }
         }
     }
 

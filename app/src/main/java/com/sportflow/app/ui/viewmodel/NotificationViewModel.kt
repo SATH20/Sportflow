@@ -23,6 +23,22 @@ class NotificationViewModel @Inject constructor(
     private val repository: SportFlowRepository
 ) : ViewModel() {
 
+    private val adminOnlyTypes = setOf("admin_registration_pending", "tournament_full")
+    private val playerOnlyTypes = setOf(
+        "registration_success",
+        "registration_accepted",
+        "registration_denied",
+        "match_scheduled",
+        "match_reminder",
+        "match_start",
+        "match_end",
+        "tournament_created",
+        "fixture_change",
+        "announcement",
+        "spot_opened",
+        "squad_closed"
+    )
+
     private val _uiState = MutableStateFlow(NotificationUiState())
     val uiState: StateFlow<NotificationUiState> = _uiState.asStateFlow()
 
@@ -37,12 +53,7 @@ class NotificationViewModel @Inject constructor(
             val role = repository.getCurrentUserProfile()?.role ?: UserRole.PLAYER
             _uiState.update { it.copy(userRole = role) }
             repository.getNotifications(uid).collect { notifications ->
-                val filtered = notifications.filter { notification ->
-                    when (role) {
-                        UserRole.ADMIN -> notification.type != "registration_success"
-                        else -> notification.type != "admin_registration_pending"
-                    }
-                }
+                val filtered = notifications.filter { notification -> isAllowedForRole(notification.type, role) }
                 val unseenCount = filtered.count { !it.seen }
                 _uiState.update {
                     it.copy(
@@ -51,6 +62,13 @@ class NotificationViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    private fun isAllowedForRole(type: String, role: UserRole): Boolean {
+        return when (role) {
+            UserRole.ADMIN -> type in adminOnlyTypes
+            else -> type in playerOnlyTypes
         }
     }
 
